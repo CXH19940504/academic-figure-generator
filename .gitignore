@@ -16,10 +16,13 @@
 **/.pytest_cache/
 .ruff_cache/
 .mypy_cache/
+backend/.venv/
+backend/data/uploads/
 
 # IDE
 .vscode/
 .idea/
+.claude/
 
 # Logs
 *.log

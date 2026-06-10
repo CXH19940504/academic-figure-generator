@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     NANOBANANA_MODEL: str = "gemini-3-pro-image-preview"
 
     # CORS
-    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173"]
+    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:8081"]
 
     # Upload
     MAX_UPLOAD_SIZE_MB: int = 50
