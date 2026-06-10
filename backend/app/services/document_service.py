@@ -1,4 +1,4 @@
-"""Document parsing service for PDF, DOCX, and TXT files."""
+"""Document parsing service for DOCX and TXT files."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import logging
 import re
 from pathlib import PurePosixPath
 
-import fitz  # PyMuPDF
 from docx import Document as DocxDocument
 
 from app.config import get_settings
@@ -17,20 +16,18 @@ logger = logging.getLogger(__name__)
 
 # Supported extensions mapped to canonical type strings
 _EXTENSION_MAP: dict[str, str] = {
-    ".pdf": "pdf",
     ".docx": "docx",
     ".txt": "txt",
 }
 
 # Magic-byte signatures for binary formats
 _MAGIC_BYTES: dict[str, bytes] = {
-    "pdf": b"%PDF",
     "docx": b"PK\x03\x04",  # ZIP (Office Open XML)
 }
 
 
 class DocumentService:
-    """Parse PDF, DOCX, and TXT files into structured sections."""
+    """Parse DOCX and TXT files into structured sections."""
 
     # ------------------------------------------------------------------
     # Validation
@@ -49,7 +46,7 @@ class DocumentService:
         Returns
         -------
         str
-            One of ``"pdf"``, ``"docx"``, ``"txt"``.
+            ``"docx"``
 
         Raises
         ------
@@ -85,129 +82,6 @@ class DocumentService:
                 )
 
         return file_type
-
-    # ------------------------------------------------------------------
-    # PDF parsing
-    # ------------------------------------------------------------------
-
-    def parse_pdf(self, content: bytes) -> dict:
-        """Parse a PDF using PyMuPDF.
-
-        Extracts text per page, identifies headings by font-size heuristic,
-        and groups text into hierarchical sections.
-
-        Returns
-        -------
-        dict
-            ``{"full_text": str, "sections": list[dict], "page_count": int}``
-            Each section dict has keys: ``title``, ``level``, ``content``,
-            ``page_start``, ``page_end``.
-        """
-        doc = fitz.open(stream=content, filetype="pdf")
-        page_count = len(doc)
-
-        # First pass: collect all text spans with font size info to determine
-        # the heading threshold.
-        all_spans: list[dict] = []
-        for page_num in range(page_count):
-            page = doc[page_num]
-            blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
-            for block in blocks:
-                if block.get("type") != 0:  # skip image blocks
-                    continue
-                for line in block.get("lines", []):
-                    for span in line.get("spans", []):
-                        text = span.get("text", "").strip()
-                        if text:
-                            all_spans.append(
-                                {
-                                    "text": text,
-                                    "size": round(span.get("size", 12), 1),
-                                    "flags": span.get("flags", 0),
-                                    "page": page_num,
-                                }
-                            )
-
-        if not all_spans:
-            doc.close()
-            return {"full_text": "", "sections": [], "page_count": page_count}
-
-        # Determine body font size (the most common size)
-        size_counts: dict[float, int] = {}
-        for sp in all_spans:
-            size_counts[sp["size"]] = size_counts.get(sp["size"], 0) + len(sp["text"])
-        body_size = max(size_counts, key=size_counts.get)
-
-        # Heading threshold: anything > body_size + 1pt or bold with > body_size
-        heading_threshold = body_size + 1.0
-
-        # Second pass: build sections
-        sections: list[dict] = []
-        current_section: dict | None = None
-        full_text_parts: list[str] = []
-
-        for sp in all_spans:
-            text = sp["text"]
-            full_text_parts.append(text)
-
-            is_heading = False
-            heading_level = 2  # default sub-heading
-
-            if sp["size"] >= heading_threshold:
-                is_heading = True
-                # Larger font = higher heading level
-                size_diff = sp["size"] - body_size
-                if size_diff >= 6:
-                    heading_level = 1
-                elif size_diff >= 3:
-                    heading_level = 2
-                else:
-                    heading_level = 3
-            elif sp["size"] > body_size and (sp["flags"] & 2 ** 4):
-                # Bold text slightly larger than body
-                is_heading = True
-                heading_level = 3
-
-            if is_heading and len(text) < 200:
-                # Finish previous section
-                if current_section is not None:
-                    current_section["content"] = current_section["content"].strip()
-                    current_section["page_end"] = sp["page"]
-                    sections.append(current_section)
-
-                current_section = {
-                    "title": text,
-                    "level": heading_level,
-                    "content": "",
-                    "page_start": sp["page"],
-                    "page_end": sp["page"],
-                }
-            else:
-                if current_section is None:
-                    # Text before the first heading -> untitled section
-                    current_section = {
-                        "title": "Introduction",
-                        "level": 1,
-                        "content": "",
-                        "page_start": sp["page"],
-                        "page_end": sp["page"],
-                    }
-                current_section["content"] += text + " "
-                current_section["page_end"] = sp["page"]
-
-        # Flush last section
-        if current_section is not None:
-            current_section["content"] = current_section["content"].strip()
-            sections.append(current_section)
-
-        doc.close()
-        full_text = " ".join(full_text_parts)
-
-        return {
-            "full_text": full_text,
-            "sections": sections,
-            "page_count": page_count,
-        }
 
     # ------------------------------------------------------------------
     # DOCX parsing
@@ -292,30 +166,44 @@ class DocumentService:
         }
 
     # ------------------------------------------------------------------
-    # TXT / Markdown parsing
+    # TXT parsing
     # ------------------------------------------------------------------
 
     def parse_txt(self, content: bytes) -> dict:
-        """Parse a plain text or Markdown file.
+        """Parse a TXT file with markdown-style headings.
 
-        Splits by Markdown headings (``# Title``, ``## Sub``, etc.) or by
-        double-newline-separated blocks when no headings are found.
+        Detects headings using:
+        - Markdown-style: # Heading 1, ## Heading 2, etc.
+        - Or splits by double newlines into sections
 
         Returns
         -------
         dict
             ``{"full_text": str, "sections": list[dict], "page_count": None}``
         """
-        text = content.decode("utf-8", errors="replace")
+        # Try multiple encodings
+        text = ""
+        for encoding in ["utf-8", "gbk", "gb2312", "utf-16"]:
+            try:
+                text = content.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
 
-        # Try Markdown heading parsing first
-        heading_pattern = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
-        headings = list(heading_pattern.finditer(text))
+        if not text:
+            logger.warning("Failed to decode TXT file with any encoding")
+            text = content.decode("utf-8", errors="replace")
+
+        # Normalize newlines
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
 
         sections: list[dict] = []
 
+        # Look for markdown-style headings
+        heading_pattern = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
+        headings = list(heading_pattern.finditer(text))
+
         if headings:
-            # Parse using Markdown headings
             for i, match in enumerate(headings):
                 level = len(match.group(1))
                 title = match.group(2).strip()
@@ -323,13 +211,13 @@ class DocumentService:
                 end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
                 section_content = text[start:end].strip()
 
-                # If there is text before the first heading, capture it
+                # Capture any preamble text before the first heading
                 if i == 0 and match.start() > 0:
                     preamble = text[: match.start()].strip()
                     if preamble:
                         sections.append(
                             {
-                                "title": "Preamble",
+                                "title": "摘要 / Preamble",
                                 "level": 1,
                                 "content": preamble,
                                 "page_start": None,
@@ -347,28 +235,22 @@ class DocumentService:
                     }
                 )
         else:
-            # Fallback: split by double newlines into paragraph-based sections
-            blocks = re.split(r"\n\s*\n", text)
-            blocks = [b.strip() for b in blocks if b.strip()]
-
-            if blocks:
-                # Group blocks into sections of reasonable size
-                # Use the first line of each block group as a pseudo-title
-                chunk_size = max(1, len(blocks) // 10) if len(blocks) > 10 else 1
-                for i in range(0, len(blocks), chunk_size):
-                    chunk = blocks[i : i + chunk_size]
-                    combined = "\n\n".join(chunk)
-                    # Use first line (truncated) as title
-                    first_line = chunk[0].split("\n")[0][:80]
-                    sections.append(
-                        {
-                            "title": first_line if len(blocks) > 1 else "Full Text",
-                            "level": 1,
-                            "content": combined,
-                            "page_start": None,
-                            "page_end": None,
-                        }
-                    )
+            # No headings found – split by double newlines into paragraphs
+            blocks = [b.strip() for b in re.split(r"\n\s*\n", text) if b.strip()]
+            chunk_size = max(1, len(blocks) // 10) if len(blocks) > 10 else 1
+            for i in range(0, len(blocks), chunk_size):
+                chunk = blocks[i : i + chunk_size]
+                combined = "\n\n".join(chunk)
+                first_line = chunk[0].split("\n")[0][:80]
+                sections.append(
+                    {
+                        "title": first_line if len(blocks) > 1 else "全文",
+                        "level": 1,
+                        "content": combined,
+                        "page_start": None,
+                        "page_end": None,
+                    }
+                )
 
         return {
             "full_text": text,
@@ -388,15 +270,14 @@ class DocumentService:
         content:
             Raw file bytes.
         file_type:
-            One of ``"pdf"``, ``"docx"``, ``"txt"``.
+            ``"docx"`` or ``"txt"``
 
         Returns
         -------
         dict
-            ``{"full_text": str, "sections": list[dict], "page_count": int | None}``
+            ``{"full_text": str, "sections": list[dict], "page_count": None}``
         """
         parsers = {
-            "pdf": self.parse_pdf,
             "docx": self.parse_docx,
             "txt": self.parse_txt,
         }

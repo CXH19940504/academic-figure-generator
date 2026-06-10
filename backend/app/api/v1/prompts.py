@@ -18,6 +18,7 @@ from app.schemas.prompt import (
     PromptUpdate,
 )
 from app.services.claude_code_service import ClaudeCodeService
+from app.services.deepseek_service import DeepseekService
 from app.services.prompt_service import PromptService
 
 logger = logging.getLogger(__name__)
@@ -62,10 +63,16 @@ async def generate_prompts(
     project_id: str,
     data: PromptGenerateRequest,
     db: AsyncSession = Depends(get_db),
+    provider: str = "claude",  # "claude" or "deepseek"
 ):
-    """Generate figure prompts via Claude Agent SDK (synchronous).
+    """Generate figure prompts via Claude Agent SDK or Deepseek API (synchronous).
 
     Requires at least one parsed document attached to the project.
+
+    Parameters
+    ----------
+    provider:
+        AI provider to use: "claude" or "deepseek"
     """
     project = await _get_project(project_id, db)
 
@@ -98,20 +105,33 @@ async def generate_prompts(
 
     color_scheme = data.custom_colors or PRESET_COLOR_SCHEMES.get(data.color_scheme, {})
 
-    # Call Claude via Agent SDK
-    claude_service = ClaudeCodeService()
-    result_data = await claude_service.generate_figure_prompts(
-        sections=sections,
-        color_scheme=color_scheme,
-        paper_field=project.paper_field,
-        figure_types=data.figure_types,
-        user_request=data.user_request,
-        max_figures=data.max_figures,
-    )
+    # Call AI service based on provider
+    if provider == "deepseek":
+        ai_service = DeepseekService()
+        result_data = await ai_service.generate_figure_prompts(
+            sections=sections,
+            color_scheme=color_scheme,
+            paper_field=project.paper_field,
+            figure_types=data.figure_types,
+            user_request=data.user_request,
+            max_figures=data.max_figures,
+        )
+        model_name = "deepseek"
+    else:
+        ai_service = ClaudeCodeService()
+        result_data = await ai_service.generate_figure_prompts(
+            sections=sections,
+            color_scheme=color_scheme,
+            paper_field=project.paper_field,
+            figure_types=data.figure_types,
+            user_request=data.user_request,
+            max_figures=data.max_figures,
+        )
+        model_name = "claude-agent-sdk"
 
     figures = result_data.get("figures", [])
     if not figures:
-        raise BadRequestException("Claude did not generate any figure prompts. Try again.")
+        raise BadRequestException(f"{provider.capitalize()} did not generate any figure prompts. Try again.")
 
     # Save to DB
     prompt_service = PromptService(db)
@@ -119,13 +139,14 @@ async def generate_prompts(
         project_id=project.id,
         document_id=document.id,
         figures=figures,
-        claude_model="claude-agent-sdk",
+        claude_model=model_name,
     )
 
     logger.info(
-        "Generated %d prompts for project %s in %d ms",
+        "Generated %d prompts for project %s using %s in %d ms",
         len(prompts),
         project.id,
+        provider,
         result_data.get("duration_ms", 0),
     )
 

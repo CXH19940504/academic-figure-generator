@@ -52,7 +52,7 @@ async def upload_document(
 ):
     """Upload a document to a project.
 
-    Accepts PDF, DOCX, or TXT files. The file is stored locally and parsed
+    Accepts DOCX files. The file is stored locally and parsed
     synchronously (inline).
     """
     project = await _get_project(project_id, db)

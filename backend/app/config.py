@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     NANOBANANA_API_BASE: str = "https://api.keepgo.icu"
     NANOBANANA_MODEL: str = "gemini-3-pro-image-preview"
 
+    # Deepseek API (for prompt generation)
+    DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_API_BASE: str = "https://api.deepseek.com/v1"
+
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173"]
 
