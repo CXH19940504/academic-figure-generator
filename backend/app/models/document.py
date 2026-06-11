@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import BigInteger, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import BigInteger, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, new_uuid
@@ -13,7 +13,53 @@ if TYPE_CHECKING:
     from .project import Project
 
 
+class Section(Base, TimestampMixin):
+    """Section model representing a chapter/section of a document."""
+    __tablename__ = "sections"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+    )
+    document_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    title: Mapped[str] = mapped_column(
+        String(500),
+        nullable=False,
+    )
+    level: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+    )
+    content: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+    )
+    page_start: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+    page_end: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+    order_index: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+
+    # Relationships
+    document: Mapped["Document"] = relationship("Document", back_populates="sections")
+
+
 class Document(Base, TimestampMixin):
+    """Document model representing an uploaded document."""
     __tablename__ = "documents"
 
     id: Mapped[str] = mapped_column(
@@ -33,7 +79,7 @@ class Document(Base, TimestampMixin):
     file_type: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
-        comment="pdf/docx/txt",
+        comment="docx/txt",
     )
     file_size_bytes: Mapped[int] = mapped_column(
         BigInteger,
@@ -42,15 +88,6 @@ class Document(Base, TimestampMixin):
     storage_path: Mapped[str] = mapped_column(
         String(1000),
         nullable=False,
-    )
-    full_text: Mapped[Optional[str]] = mapped_column(
-        Text,
-        nullable=True,
-    )
-    sections: Mapped[Optional[dict]] = mapped_column(
-        JSON,
-        nullable=True,
-        comment="Parsed chapter structure",
     )
     page_count: Mapped[Optional[int]] = mapped_column(
         Integer,
@@ -66,11 +103,12 @@ class Document(Base, TimestampMixin):
         Text,
         nullable=True,
     )
-    ocr_markdown: Mapped[Optional[str]] = mapped_column(
-        Text,
-        nullable=True,
-        comment="Raw OCR Markdown output",
-    )
 
     # Relationships
     project: Mapped["Project"] = relationship("Project", back_populates="documents")
+    sections: Mapped[list["Section"]] = relationship(
+        "Section",
+        back_populates="document",
+        cascade="all, delete-orphan",
+        order_by="Section.order_index",
+    )

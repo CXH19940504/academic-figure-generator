@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = getenv("ANTHROPIC_API_KEY", "")
     FIGURE_PROMPT_SKILL_NAME: str = getenv("FIGURE_PROMPT_SKILL_NAME", "academic-figure-prompt")
 
+    # Deepseek API (env var: DEEPSEEK_API_KEY, DEEPSEEK_API_BASE)
+    DEEPSEEK_API_KEY: str = getenv("DEEPSEEK_API_KEY", "")
+    DEEPSEEK_API_BASE: str = getenv("DEEPSEEK_API_BASE", "https://api.deepseek.cn/v1")
+    DEEPSEEK_MODEL: str = getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
+
     # NanoBanana / Gemini image generation API (env vars: NANOBANANA_API_KEY, NANOBANANA_API_BASE, NANOBANANA_MODEL)
     NANOBANANA_API_KEY: str = getenv("NANOBANANA_API_KEY", "")
     NANOBANANA_API_BASE: str = getenv("NANOBANANA_API_BASE", "https://api.keepgo.icu")

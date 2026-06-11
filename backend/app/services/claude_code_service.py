@@ -153,8 +153,13 @@ class ClaudeCodeService:
         # Paper content
         parts.append("--- PAPER SECTIONS ---\n")
         for i, section in enumerate(sections, 1):
-            title = section.get("title", f"Section {i}")
-            content = section.get("content", section.get("text", ""))
+            # Handle both dict and ORM object
+            if isinstance(section, dict):
+                title = section.get("title", f"Section {i}")
+                content = section.get("content", section.get("text", ""))
+            else:
+                title = getattr(section, "title", f"Section {i}")
+                content = getattr(section, "content", "") or ""
 
             # Truncate very long sections
             max_section_chars = 8000

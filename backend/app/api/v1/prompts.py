@@ -6,7 +6,9 @@ import logging
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
+from app.config import get_settings
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.core.prompts.color_schemes import DEFAULT_COLOR_SCHEME, PRESET_COLOR_SCHEMES
 from app.dependencies import get_db
@@ -70,6 +72,7 @@ async def generate_prompts(
 
     Requires at least one parsed document attached to the project.
     """
+    settings = get_settings()
     project = await _get_project(project_id, db)
 
     # Find the most recent completed document
@@ -81,6 +84,7 @@ async def generate_prompts(
         )
         .order_by(Document.created_at.desc())
         .limit(1)
+        .options(selectinload(Document.sections))
     )
     document: Document | None = result.scalar_one_or_none()
     if document is None:
