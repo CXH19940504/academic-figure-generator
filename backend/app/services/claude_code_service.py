@@ -124,9 +124,13 @@ class ClaudeCodeService:
             parts.append(f"**Academic Field:** {paper_field}\n")
 
         # Color palette
-        parts.append("**Color Palette to Use:**")
+        parts.append("**Color Palette to Use (Step 2.5 SKIPPED — already selected by user):**")
         color_block = json.dumps(color_scheme, indent=2)
         parts.append(f"```json\n{color_block}\n```")
+        parts.append(
+            "The color scheme above has been confirmed by the user as their final choice. "
+            "DO NOT stop to present color options — proceed directly to Step 3 to generate figure prompts."
+        )
         parts.append("")
 
         # Figure types
@@ -202,6 +206,7 @@ class ClaudeCodeService:
                 pass
 
         logger.warning("Could not parse JSON figures from Claude response")
+        logger.warning("Raw Claude response (first 3000 chars): %s", text[:3000] if text else "(empty)")
         return []
 
     @staticmethod

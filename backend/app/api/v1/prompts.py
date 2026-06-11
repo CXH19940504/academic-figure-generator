@@ -94,9 +94,12 @@ async def generate_prompts(
         raise BadRequestException("No sections available for prompt generation.")
 
     # Resolve color scheme
-    from app.core.prompts.color_schemes import PRESET_COLOR_SCHEMES  # noqa: PLC0415
+    from app.core.prompts.color_schemes import DEFAULT_COLOR_SCHEME, PRESET_COLOR_SCHEMES  # noqa: PLC0415
 
-    color_scheme = data.custom_colors or PRESET_COLOR_SCHEMES.get(data.color_scheme, {})
+    color_scheme = data.custom_colors or PRESET_COLOR_SCHEMES.get(
+        data.color_scheme or DEFAULT_COLOR_SCHEME,
+        PRESET_COLOR_SCHEMES[DEFAULT_COLOR_SCHEME],
+    )
 
     # Call Claude via Agent SDK
     claude_service = ClaudeCodeService()
