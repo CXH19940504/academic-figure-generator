@@ -11,7 +11,7 @@ from app.core.exceptions import NotFoundException
 from app.dependencies import get_db
 from app.models.document import Document, Section
 from app.models.project import Project
-from app.schemas.document import DocumentResponse
+from app.schemas.document import DocumentCreate, DocumentResponse
 from app.services.local_storage_service import LocalStorageService
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,7 @@ async def list_project_documents(
 async def upload_document(
     project_id: str,
     file: UploadFile,
+    data: DocumentCreate,
     db: AsyncSession = Depends(get_db),
 ):
     """Upload a document to a project.
@@ -73,9 +74,14 @@ async def upload_document(
     storage = LocalStorageService()
     storage_path = storage.save_upload(f"{project.id}/{original_filename}", contents)
 
-    # Create DB record
+    # Create DB record with new fields
     document = Document(
         project_id=project.id,
+        uuid=data.uuid,
+        title=data.title,
+        paper_type=data.paper_type,
+        subject_code=data.subject_code,
+        template_id=data.template_id,
         original_filename=original_filename,
         file_type=file_type,
         file_size_bytes=file_size,

@@ -53,6 +53,26 @@ class Section(Base, TimestampMixin):
         nullable=False,
         default=0,
     )
+    insert_table: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="保存文件路径",
+    )
+    insert_image: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="保存图片路径",
+    )
+    insert_formula: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="保存公式路径",
+    )
+    insert_code: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="保存代码路径",
+    )
 
     # Relationships
     document: Mapped["Document"] = relationship("Document", back_populates="sections")
@@ -71,6 +91,31 @@ class Document(Base, TimestampMixin):
         String(36),
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
+    )
+    uuid: Mapped[str] = mapped_column(
+        String(36),
+        nullable=True,
+        comment="用户ID",
+    )
+    title: Mapped[str] = mapped_column(
+        String(500),
+        nullable=True,
+        comment="论文标题",
+    ) 
+    paper_type: Mapped[int] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="论文类型",
+    ) 
+    subject_code: Mapped[str] = mapped_column(
+        String(20),
+        nullable=True,
+        comment="学科ID（专业代码）",
+    )
+    template_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="排版模板ID",
     )
     original_filename: Mapped[str] = mapped_column(
         String(500),

@@ -13,7 +13,6 @@ from app.core.exceptions import BadRequestException, NotFoundException
 from app.core.prompts.color_schemes import DEFAULT_COLOR_SCHEME, PRESET_COLOR_SCHEMES
 from app.dependencies import get_db
 from app.models.document import Document
-from app.models.image import Image
 from app.models.project import Project
 from app.models.prompt import Prompt
 from app.schemas.prompt import (

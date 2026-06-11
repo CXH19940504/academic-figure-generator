@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import JSON, String, Text
+from sqlalchemy import ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, new_uuid
@@ -62,3 +62,39 @@ class Project(Base, TimestampMixin):
     images: Mapped[list["Image"]] = relationship(
         "Image", back_populates="project", cascade="all, delete-orphan"
     )
+    templates: Mapped[list["Template"]] = relationship(
+        "Template", back_populates="project", cascade="all, delete-orphan"
+    )
+
+
+
+class Template(Base, TimestampMixin):
+    __tablename__ = "templates"
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=new_uuid,
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="关联的项目ID",
+    )
+    name: Mapped[str] = mapped_column(
+        String(200),
+        nullable=False,
+    )
+    content: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+    )
+    storage_path: Mapped[Optional[str]] = mapped_column(
+        String(500),
+        nullable=True,
+        comment="存储路径",
+    )
+
+    # Relationship
+    project: Mapped["Project"] = relationship("Project", back_populates="templates")

@@ -26,6 +26,7 @@ class Settings(BaseSettings):
 
     # Claude Agent SDK (env var: ANTHROPIC_API_KEY)
     ANTHROPIC_API_KEY: str = getenv("ANTHROPIC_API_KEY", "")
+    CLAUDE_MODEL_NAME: str = getenv("CLAUDE_MODEL_NAME", "deepseek-v4-pro")
     FIGURE_PROMPT_SKILL_NAME: str = getenv("FIGURE_PROMPT_SKILL_NAME", "academic-figure-prompt")
 
     # Deepseek API (env var: DEEPSEEK_API_KEY, DEEPSEEK_API_BASE)

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -42,3 +43,22 @@ class ProjectListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class TemplateResponse(BaseModel):
+    """Template schema for API responses."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: Optional[str] = None
+    name: str
+    content: str | None = None
+    storage_path: str | None = None
+    created_at: datetime
+
+
+class TemplateCreate(BaseModel):
+    """Template creation schema for API requests."""
+    name: str
+    content: str | None = None
+    storage_path: str | None = None
