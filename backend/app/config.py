@@ -1,6 +1,7 @@
 """Application settings — personal-use local version."""
 
 from functools import lru_cache
+from os import getenv
 from pathlib import Path
 
 from pydantic import field_validator
@@ -27,13 +28,13 @@ class Settings(BaseSettings):
     # Data directory (uploads, figures)
     DATA_DIR: str = str(_BACKEND_ROOT / "data")
 
-    # Claude Agent SDK (uses ANTHROPIC_API_KEY env var directly)
-    ANTHROPIC_API_KEY: str = ""
+    # Claude Agent SDK (env var: ANTHROPIC_API_KEY)
+    ANTHROPIC_API_KEY: str = getenv("ANTHROPIC_API_KEY", "")
 
-    # NanoBanana / Gemini image generation API
-    NANOBANANA_API_KEY: str = ""
-    NANOBANANA_API_BASE: str = "https://api.keepgo.icu"
-    NANOBANANA_MODEL: str = "gemini-3-pro-image-preview"
+    # NanoBanana / Gemini image generation API (env vars: NANOBANANA_API_KEY, NANOBANANA_API_BASE, NANOBANANA_MODEL)
+    NANOBANANA_API_KEY: str = getenv("NANOBANANA_API_KEY", "")
+    NANOBANANA_API_BASE: str = getenv("NANOBANANA_API_BASE", "https://api.keepgo.icu")
+    NANOBANANA_MODEL: str = getenv("NANOBANANA_MODEL", "gemini-3-pro-image-preview")
 
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:8081"]
