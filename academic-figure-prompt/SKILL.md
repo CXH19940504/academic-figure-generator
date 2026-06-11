@@ -2,7 +2,7 @@
 id: academic-figure-prompt
 name: Academic Figure Prompt
 version: 1.0.0
-description: Use this skill whenever the user wants to generate detailed English prompts for AI image tools (NanoBanana / Gemini / DALL-E / Midjourney) to produce top-conference-quality academic figures — including framework diagrams, network architecture diagrams, pipeline flowcharts, module detail diagrams, comparison/ablation figures, and data pattern grids — especially when the user says "论文配图提示词", "生成论文配图", "学术论文生图", "架构图提示词", "框架图提示词", "顶会风格配图", "CVPR 风格图", "NeurIPS 风格图", "paper figure prompt", "academic diagram prompt", or provides a LaTeX/PDF/Word paper and asks for figure prompts. If the user has not specified a color scheme, present the 8 preset palette options and color tool links before generating any prompt.
+description: Use this skill whenever the user wants to generate detailed English prompts for AI image tools (NanoBanana / Gemini / DALL-E / Midjourney) to produce top-conference-quality academic figures — including framework diagrams, network architecture diagrams, pipeline flowcharts, module detail diagrams, comparison/ablation figures, and data pattern grids — especially when the user says "论文配图提示词", "生成论文配图", "学术论文生图", "架构图提示词", "框架图提示词", "顶会风格配图", "CVPR 风格图", "NeurIPS 风格图", "paper figure prompt", "academic diagram prompt", or provides a LaTeX/PDF/Word paper and asks for figure prompts. If the user has not specified a color scheme, default to Option A (Okabe-Ito Academic Standard) and proceed directly — color selection is non-blocking and automatic.
 stages: [writing, research, review]
 tools: [bash]
 ---
@@ -13,9 +13,9 @@ tools: [bash]
 
 ## 核心理念
 
-生成的提示词必须做到三点：**信息密度极高**、**视觉风格精确**、**内容完整无遗漏**。
+生成的提示词必须做到四点：**信息密度极高**、**视觉风格精确**、**内容完整无遗漏**、**总长度不超过 4096 tokens**。
 
-宁可提示词过长过详细，也绝不能简化省略。学术配图的价值在于精准传达复杂信息，而非美观简洁。
+在以上约束下做到最佳平衡：优先保留关键模块、公式、维度标注和配色规格；次要描述可精简但不可省略核心结构。学术配图的价值在于精准传达复杂信息，而非美观简洁。
 
 ## 工作流程
 
@@ -27,6 +27,7 @@ tools: [bash]
 2. 提取每个章节的核心概念、方法、模型架构、数据流
 3. 识别所有需要配图的位置及其内容需求
 4. 理解论文中的数学符号、变量含义、维度信息
+5. **从原文中提取图中文字**：配图中的所有文字内容（模块名称、标签、公式、维度标注、箭头注释等）必须从输入原文中提取，不得凭空编造。对于 LaTeX 源文件，优先提取 `\caption`、`\label`、章节标题、公式中的符号作为图中文字来源
 
 ### Step 2: 分析参考图（如有）
 
@@ -41,15 +42,23 @@ tools: [bash]
 | **信息密度** | 每个模块内的子细节数量、嵌入缩略图的使用方式 |
 | **特殊元素** | 反馈环路、虚线框、跳接箭头、图例位置 |
 
-### Step 2.5: 配色方案选择（必须在生成提示词前完成）
+### Step 2.5: 配色方案确定（非阻塞，自动决策）
 
-**在生成任何提示词之前，必须先向用户展示配色选项并等待确认。**
+**此步骤为自动决策，无需等待用户确认。**
 
-展示以下内容：
+配色方案按以下优先级确定：
 
----
+1. **从初始请求中提取**：如果用户在请求中已包含配色信息（如指定了 hex 色值、颜色名称如"蓝绿配色"、或请求中直接附带了 `color_scheme` / `custom_colors` JSON），则提取并使用该配色方案。
+2. **从参考图中提取**：如果用户提供了参考图，从参考图中分析提取主色、辅色、点缀色。
+3. **使用默认方案**：如果以上均未提供，**默认使用方案 A：Okabe-Ito 学术标准**（色盲友好，Nature / Science / CVPR 推荐），直接进入 Step 3，不询问用户。
 
-**请选择配色方案（输入编号或自定义）：**
+| 优先级 | 来源 | 处理方式 |
+|--------|------|----------|
+| 1 | 请求中明确指定的配色 | 直接使用 |
+| 2 | 参考图提取 | 直接使用 |
+| 3 | 默认方案 A: Okabe-Ito | 直接使用，不询问 |
+
+以下 8 种预设方案供参考（用户可选择覆盖默认值）：
 
 | # | 方案名 | 风格定位 | 主色 | 辅色 | 点缀色 |
 |---|--------|----------|------|------|--------|
@@ -71,13 +80,7 @@ tools: [bash]
 - **Viz Palette** — 专为数据可视化配色，实时模拟色盲效果：https://projects.susielu.com/viz-palette
 - **Paletton** — 色相环驱动配色方案设计器：https://paletton.com
 
-> 提示：选好颜色后，直接把主色/辅色/点缀色的 hex 值告诉我即可（如 `主色 #2E7D32，辅色 #C49A00`）。
-
----
-
-**等待用户选择后，再进入 Step 3 生成提示词。**
-
-如果用户已在初始请求中明确指定了配色（如"用蓝绿配色"、"参考我的参考图"），则跳过此步骤直接进入 Step 3。
+> 提示：如需覆盖默认配色，直接把主色/辅色/点缀色的 hex 值在请求中提供即可（如 `主色 #2E7D32，辅色 #C49A00`）。
 
 ### Step 3: 生成提示词
 
@@ -360,6 +363,8 @@ pathways, embedded thumbnail visualizations, and dense annotations"].
 - [ ] **风格规格**：末尾包含完整的 STYLE SPECIFICATIONS 段落（含色值约束和禁止项）
 - [ ] **无简化**：没有用 "..." 或 "etc." 省略任何内容
 - [ ] **灰度测试**：描述确保图片在黑白打印时仍可完整阅读
+- [ ] **Token 限制**：提示词总长度不超过 4096 tokens（如超限，精简次要模块描述和冗余修饰词，但保留所有模块名称、公式、维度标注）
+- [ ] **文字来源**：图中所有文字（模块名、标签、公式、注释）均从输入原文中提取，无凭空编造
 
 ---
 
@@ -384,7 +389,8 @@ pathways, embedded thumbnail visualizations, and dense annotations"].
 ## 注意事项
 
 1. **提示词语言**：提示词本身必须为英文，说明文字用中文
-2. **长度不限**：宁长勿短，信息密度是第一优先级
+2. **Token 限制**：每段提示词不超过 4096 tokens。精简策略：优先压缩全局描述和风格规格中的重复描述，保留所有模块名称、公式、维度标注和核心结构；避免冗余修饰词
 3. **领域自适应**：根据论文领域（CV、NLP、Robotics、医学等）调整缩略图和图标选择
 4. **参考图优先**：如果用户提供了参考图，配色和布局以参考图为准，覆盖预设方案
 5. **批量生成**：当用户要求为整篇论文生成配图时，按章节组织，并给出优先级建议
+6. **图中文字来源**：所有图中文字必须从输入原文中提取，不得凭空创建。对于 LaTeX 源文件，图中文字应来自 `\caption`、`\label`、章节标题、`\section`、公式符号、表格内容等；对于 PDF/Word 文档，从正文段落、标题、图表标题中提取
