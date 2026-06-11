@@ -10,9 +10,10 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "python-multipart>=0.0.12",
-    # Database (SQLite)
+    # Database (MySQL)
     "sqlalchemy[asyncio]>=2.0.36",
-    "aiosqlite>=0.20.0",
+    "asyncmy>=0.2.9",
+    "pymysql>=1.1.0",
     # HTTP client
     "httpx>=0.28.0",
     # Document parsing

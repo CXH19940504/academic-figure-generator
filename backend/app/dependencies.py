@@ -9,13 +9,13 @@ from app.config import get_settings
 settings = get_settings()
 
 # ---------------------------------------------------------------------------
-# Database (SQLite via aiosqlite)
+# Database (MySQL via asyncmy)
 # ---------------------------------------------------------------------------
 
 _engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,
-    connect_args={"check_same_thread": False},
+    pool_pre_ping=True,
 )
 
 _AsyncSessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(

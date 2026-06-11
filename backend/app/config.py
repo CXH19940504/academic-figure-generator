@@ -18,12 +18,10 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "local-dev-key"
     API_V1_PREFIX: str = "/api/v1"
 
-    # SQLite
-    DATABASE_PATH: str = str(_BACKEND_ROOT / "data" / "app.db")
-
-    @property
-    def DATABASE_URL(self) -> str:
-        return f"sqlite+aiosqlite:///{self.DATABASE_PATH}"
+    # MySQL
+    DATABASE_URL: str = (
+        "mysql+asyncmy://api_test:APItest123@rm-2zesb8z0z4n437228wo.mysql.rds.aliyuncs.com:3306/paper_test"
+    )
 
     # Data directory (uploads, figures)
     DATA_DIR: str = str(_BACKEND_ROOT / "data")
@@ -53,7 +51,7 @@ class Settings(BaseSettings):
         prefix = prefix.rstrip("/")
         return prefix or "/api/v1"
 
-    model_config = {"env_file": ".env", "extra": "ignore"}
+    model_config = {"env_file": str(_BACKEND_ROOT.parent / ".env"), "extra": "ignore"}
 
 
 @lru_cache

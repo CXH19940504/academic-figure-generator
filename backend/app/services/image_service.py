@@ -52,6 +52,7 @@ class ImageService:
         self.api_key = api_key or settings.NANOBANANA_API_KEY
         # Priority: explicit param → config default
         self.api_base = (api_base_url or settings.NANOBANANA_API_BASE).rstrip("/")
+        self.model = settings.NANOBANANA_MODEL
 
         if not self.api_key:
             raise ExternalAPIException(
@@ -102,7 +103,7 @@ class ImageService:
 
         # Build the request body (OpenAI-compatible format)
         body: dict = {
-            "model": "gemini-3-pro-image-preview",
+            "model": self.model,
             "n": 1,
             "size": size_str,
             "aspect_ratio": aspect_ratio,
@@ -124,7 +125,7 @@ class ImageService:
         else:
             body["prompt"] = prompt
 
-        endpoint = f"{self.api_base}/v1/images/generations"
+        endpoint = f"{self.api_base}/images/generations"
 
         start_time = time.monotonic()
 
@@ -166,7 +167,10 @@ class ImageService:
 
         duration_ms = int((time.monotonic() - start_time) * 1000)
 
-        # Extract image data from OpenAI-compatible response
+        # Extract image data from the response.
+        # Supports two formats:
+        #   1. OpenAI-compatible: data[0].b64_json (base64 inline)
+        #   2. Zhipu BigModel:    data[0].url (HTTPS download link)
         data_list = result.get("data", [])
         if not data_list:
             raise ExternalAPIException(
@@ -174,10 +178,35 @@ class ImageService:
             )
 
         image_data = data_list[0]
+
+        # Try inline base64 first, then fall back to URL download
         image_base64 = image_data.get("b64_json", "")
+        image_url = image_data.get("url", "")
+
+        if not image_base64 and image_url:
+            logger.info("Downloading generated image from URL: %s", image_url[:120])
+            try:
+                with httpx.Client(timeout=120.0) as client:
+                    dl_response = client.get(image_url)
+                    dl_response.raise_for_status()
+                    image_bytes = dl_response.content
+                    image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+                    logger.info(
+                        "Downloaded image: %d bytes → %d base64 chars",
+                        len(image_bytes),
+                        len(image_base64),
+                    )
+            except httpx.HTTPError as exc:
+                logger.error("Failed to download image from URL %s: %s", image_url, exc)
+                raise ExternalAPIException(
+                    "NanoBanana",
+                    f"Failed to download image from {image_url}: {exc}",
+                ) from exc
+
         if not image_base64:
             raise ExternalAPIException(
-                "NanoBanana", "Empty base64 image data in response"
+                "NanoBanana",
+                "No image data in response (neither b64_json nor url present)",
             )
 
         logger.info(
@@ -232,9 +261,22 @@ class ImageService:
         height = math.sqrt(area * rh / rw)
         width = height * rw / rh
 
-        # Round to nearest multiple of 8
-        width = max(8, round(width / 8) * 8)
-        height = max(8, round(height / 8) * 8)
+        # Round to nearest multiple of 16 (API requirement)
+        width = max(16, round(width / 16) * 16)
+        height = max(16, round(height / 16) * 16)
+
+        # Clamp to API limits: 512px–2880px per dimension
+        width = max(512, min(2880, width))
+        height = max(512, min(2880, height))
+
+        # Enforce max pixel count: 2^21 = 2,097,152
+        MAX_PIXELS = 2_097_152  # 2^21
+        if width * height > MAX_PIXELS:
+            scale = math.sqrt(MAX_PIXELS / (width * height))
+            width = math.floor(width * scale / 16) * 16
+            height = math.floor(height * scale / 16) * 16
+            width = max(512, width)
+            height = max(512, height)
 
         return width, height
 
