@@ -19,15 +19,14 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
 
     # MySQL
-    DATABASE_URL: str = (
-        "mysql+asyncmy://api_test:APItest123@rm-2zesb8z0z4n437228wo.mysql.rds.aliyuncs.com:3306/paper_test"
-    )
+    DATABASE_URL: str = getenv("DATABASE_URL", "sqlite://paper_test.db")
 
     # Data directory (uploads, figures)
     DATA_DIR: str = str(_BACKEND_ROOT / "data")
 
     # Claude Agent SDK (env var: ANTHROPIC_API_KEY)
     ANTHROPIC_API_KEY: str = getenv("ANTHROPIC_API_KEY", "")
+    FIGURE_PROMPT_SKILL_NAME: str = getenv("FIGURE_PROMPT_SKILL_NAME", "academic-figure-prompt")
 
     # NanoBanana / Gemini image generation API (env vars: NANOBANANA_API_KEY, NANOBANANA_API_BASE, NANOBANANA_MODEL)
     NANOBANANA_API_KEY: str = getenv("NANOBANANA_API_KEY", "")

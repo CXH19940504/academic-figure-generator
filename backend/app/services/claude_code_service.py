@@ -14,16 +14,18 @@ from pathlib import Path
 from typing import Any
 
 from app.core.exceptions import ExternalAPIException
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 # Path to SKILL.md relative to project root
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-_SKILL_PATH = _PROJECT_ROOT / "academic-figure-prompt" / "SKILL.md"
 
 
 def _load_skill_content() -> str:
     """Load the academic-figure-prompt SKILL.md content."""
+    _SKILL_PATH = _PROJECT_ROOT / settings.FIGURE_PROMPT_SKILL_NAME / "SKILL.md"
     if not _SKILL_PATH.exists():
         logger.warning("SKILL.md not found at %s", _SKILL_PATH)
         return ""

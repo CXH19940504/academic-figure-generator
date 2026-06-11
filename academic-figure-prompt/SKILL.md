@@ -2,18 +2,18 @@
 id: academic-figure-prompt
 name: Academic Figure Prompt
 version: 1.0.0
-description: Use this skill whenever the user wants to generate detailed English prompts for AI image tools (NanoBanana / Gemini / DALL-E / Midjourney) to produce top-conference-quality academic figures — including framework diagrams, network architecture diagrams, pipeline flowcharts, module detail diagrams, comparison/ablation figures, and data pattern grids — especially when the user says "论文配图提示词", "生成论文配图", "学术论文生图", "架构图提示词", "框架图提示词", "顶会风格配图", "CVPR 风格图", "NeurIPS 风格图", "paper figure prompt", "academic diagram prompt", or provides a LaTeX/PDF/Word paper and asks for figure prompts. If the user has not specified a color scheme, default to Option A (Okabe-Ito Academic Standard) and proceed directly — color selection is non-blocking and automatic.
+description: Use this skill whenever the user wants to generate detailed prompts for AI image tools (NanoBanana / Gemini / DALL-E / Midjourney) to produce top-conference-quality academic figures — including framework diagrams, network architecture diagrams, pipeline flowcharts, module detail diagrams, comparison/ablation figures, and data pattern grids. If the user has not specified a color scheme, default to Option A (Okabe-Ito Academic Standard).
 stages: [writing, research, review]
 tools: [bash]
 ---
 
 # Academic Figure Prompt — 学术论文配图提示词生成器
 
-为学术论文生成**极其详细的英文提示词**，供 AI 图片生成工具（NanoBanana / Gemini / Midjourney / DALL-E）生成顶会级别的专业学术配图。
+为学术论文生成**极其详细的提示词**，供 AI 图片生成工具（NanoBanana / Gemini / Midjourney / DALL-E）生成一张专业学术配图。
 
 ## 核心理念
 
-生成的提示词必须做到四点：**信息密度极高**、**视觉风格精确**、**内容完整无遗漏**、**总长度不超过 4096 tokens**。
+生成的提示词必须做到四点：**包含核心概念**、**视觉风格精确**、**内容完整无遗漏**、**总长度不超过 4096 字符**。
 
 在以上约束下做到最佳平衡：优先保留关键模块、公式、维度标注和配色规格；次要描述可精简但不可省略核心结构。学术配图的价值在于精准传达复杂信息，而非美观简洁。
 
@@ -23,11 +23,10 @@ tools: [bash]
 
 在生成提示词之前，**必须**先充分理解论文内容：
 
-1. 阅读用户提供的论文/章节源文件（LaTeX、Word、PDF 等）
-2. 提取每个章节的核心概念、方法、模型架构、数据流
-3. 识别所有需要配图的位置及其内容需求
-4. 理解论文中的数学符号、变量含义、维度信息
-5. **从原文中提取图中文字**：配图中的所有文字内容（模块名称、标签、公式、维度标注、箭头注释等）必须从输入原文中提取，不得凭空编造。对于 LaTeX 源文件，优先提取 `\caption`、`\label`、章节标题、公式中的符号作为图中文字来源
+1. 提取每个章节的核心概念、方法、模型架构、数据流
+2. 判断需要的标注语言（如英文、中文、无文字）、配图类型及其内容
+3. 理解论文中的数学符号、变量含义、维度信息
+4. **从原文中提取图中文字**：配图中的所有文字内容（模块名称、标签、公式、维度标注、箭头注释等）必须从输入原文中提取，不得凭空编造。优先提取 `\caption`、`\label`、章节标题、公式中的符号作为图中文字来源
 
 ### Step 2: 分析参考图（如有）
 
@@ -44,8 +43,6 @@ tools: [bash]
 
 ### Step 2.5: 配色方案确定（非阻塞，自动决策）
 
-**此步骤为自动决策，无需等待用户确认。**
-
 配色方案按以下优先级确定：
 
 1. **从初始请求中提取**：如果用户在请求中已包含配色信息（如指定了 hex 色值、颜色名称如"蓝绿配色"、或请求中直接附带了 `color_scheme` / `custom_colors` JSON），则提取并使用该配色方案。
@@ -58,27 +55,11 @@ tools: [bash]
 | 2 | 参考图提取 | 直接使用 |
 | 3 | 默认方案 A: Okabe-Ito | 直接使用，不询问 |
 
-以下 8 种预设方案供参考（用户可选择覆盖默认值）：
+默认配色方案供参考：
 
 | # | 方案名 | 风格定位 | 主色 | 辅色 | 点缀色 |
 |---|--------|----------|------|------|--------|
 | A | Okabe-Ito 学术标准 | Nature / Science / CVPR 推荐，色盲友好 | Steel Blue `#0072B2` | Warm Orange `#E69F00` | Bluish Green `#009E73` |
-| B | Blue 单色系 | 克制、模块详解图适用 | Navy `#0072B2` | Medium Blue `#4A90D9` | Light Blue `#A0C4E8` |
-| C | Teal + Amber | 现代感强，ICLR / NeurIPS 风 | Deep Teal `#00897B` | Amber `#FFB300` | Soft Grey `#ECEFF1` |
-| D | Navy + Coral | 沉稳大气，IEEE 期刊风 | Deep Navy `#1A3A5C` | Coral `#E05A47` | Warm Sand `#F5ECD7` |
-| E | Slate + Violet | 优雅冷调，医学 / 生物信息学风 | Slate Blue `#3F51B5` | Muted Violet `#7E57C2` | Pale Lavender `#EDE7F6` |
-| F | Forest + Gold | 厚重学术感，自然科学期刊风 | Forest Green `#2E7D32` | Gold `#C49A00` | Cream `#F9F6EE` |
-| G | Minimal Grey | 极简灰度 + 单一强调色，arXiv 技术报告风 | Charcoal `#263238` | Steel `#546E7A` | 单一强调（用户指定） |
-| H | 自定义 | 由用户提供色值或从下方工具选取 | — | — | — |
-
-**如需自定义配色，推荐以下工具：**
-
-- **Coolors** — 随机生成 + 锁定调整，导出色板：https://coolors.co
-- **ColorHunt** — 精选高质量色板，支持标签筛选：https://colorhunt.co
-- **Adobe Color** — 色轮 + 互补/类比/三分配色生成：https://color.adobe.com/create
-- **ColorBrewer** — 专为学术数据可视化设计，支持色盲安全验证：https://colorbrewer2.org
-- **Viz Palette** — 专为数据可视化配色，实时模拟色盲效果：https://projects.susielu.com/viz-palette
-- **Paletton** — 色相环驱动配色方案设计器：https://paletton.com
 
 > 提示：如需覆盖默认配色，直接把主色/辅色/点缀色的 hex 值在请求中提供即可（如 `主色 #2E7D32，辅色 #C49A00`）。
 
@@ -94,18 +75,20 @@ tools: [bash]
 
 ### 层次 1: 全局描述（Global Description）
 
-开头一段话，概括整张图的类型、主题和整体布局。
+开头一段话，概括整张图的类型、主题和整体布局，同时指定标注语言（如英文、中文、无文字）。
 
-```
-A highly detailed, information-dense academic paper [类型] diagram in the style of
-top-tier [目标会议] publications. The diagram illustrates [主题概述], arranged as
-[布局描述: e.g., "a rich multi-stage left-to-right pipeline with multiple parallel
+``` 英文prompt
+A highly detailed, information-dense academic paper [类型] diagram. The diagram illustrates [主题概述], arranged as [布局描述: e.g., "a rich multi-stage left-to-right pipeline with multiple parallel
 pathways, embedded thumbnail visualizations, and dense annotations"].
 ```
 
+``` 中文prompt
+一份细节饱满、信息高密度的学术论文 [类型]，整张图展示 [主题概述] ，整体排布形式为 [布局描述：如：“从左至右多阶段流水线、多条并行分支、内嵌微型可视化图、高密度文字标注”]。
+```
+
 **类型词汇表：**
-- architecture / framework / pipeline / flowchart / comparison / ablation
-- network architecture / module detail / data flow / system overview
+- 英文：architecture / framework / pipeline / flowchart / comparison / ablation / network architecture / module detail / data flow / system overview
+- 中文：架构图 / 框架图 / 流水线 / 流程图 / 对比图 / 消融图 / 网络架构图 / 模块详解图 / 数据流图 / 系统总览图
 
 ### 层次 2: 分区详细描述（Section-by-Section Description）
 
@@ -231,18 +214,6 @@ pathways, embedded thumbnail visualizations, and dense annotations"].
 | 模块填充 | Pure White `#FFFFFF` | 所有内容框 |
 | 标准边框 | Grey `#B0BEC5` | 普通框体 |
 
-### 方案 H: 用户自定义
-
-从参考图中提取，或使用调色工具选定色值后，按如下格式告知：
-
-```
-主色：#XXXXXX（核心模块边框/节标签）
-辅色：#XXXXXX（次要模块/强调）
-点缀色：#XXXXXX（输出结果，可选）
-背景：#XXXXXX（区域分组背景，建议极浅）
-文字：#XXXXXX（建议深色）
-```
-
 ---
 
 ## 配色禁忌（避免 AI 生图感）
@@ -260,7 +231,7 @@ pathways, embedded thumbnail visualizations, and dense annotations"].
 
 ## 图片类型专用模板
 
-### 类型 1: 总体框架图（Overall Framework）
+### 类型 1: 框架图/系统总览图（Overall Framework / System Overview）
 
 ```
 结构: [输入] → [阶段1] → [阶段2] → ... → [输出]
@@ -307,7 +278,7 @@ pathways, embedded thumbnail visualizations, and dense annotations"].
 - 底部可添加性能指标对比条（仅用主色 + 辅色 + Grey）
 ```
 
-### 类型 5: 数据/行为模板图（Data / Behavior Patterns）
+### 类型 5: 数据流图/流水线/流程图（Data Flow / Pipeline / Flowchart）
 
 ```
 结构: 1×N 网格，每格一个类别
@@ -350,7 +321,7 @@ pathways, embedded thumbnail visualizations, and dense annotations"].
 
 生成每个提示词后，对照以下清单自检：
 
-- [ ] **信息密度**：每个模块框内都有子内容（子框、缩略图、公式），没有空白框
+- [ ] **信息密度**：每个模块框内都有子内容（子框或缩略图或公式），没有空白框
 - [ ] **色彩克制**：仅使用 2-3 种色彩，无多余颜色
 - [ ] **白色主导**：≥70% 面积为白色/近白色，无彩色背景面板
 - [ ] **边框而非填充**：模块用白色填充 + 彩色/灰色细边框，而非彩色填充
@@ -380,7 +351,7 @@ pathways, embedded thumbnail visualizations, and dense annotations"].
 推荐分辨率：[建议的宽高比，如 16:9, 3:2]
 
 ​```
-[完整英文提示词]
+[完整提示词]
 ​```
 ```
 
@@ -388,9 +359,9 @@ pathways, embedded thumbnail visualizations, and dense annotations"].
 
 ## 注意事项
 
-1. **提示词语言**：提示词本身必须为英文，说明文字用中文
-2. **Token 限制**：每段提示词不超过 4096 tokens。精简策略：优先压缩全局描述和风格规格中的重复描述，保留所有模块名称、公式、维度标注和核心结构；避免冗余修饰词
+1. **提示词语言**：提示词本身与原文语言保持一致
+2. **Token 限制**：每段提示词不超过 4096 个字符。精简策略：优先压缩全局描述和风格规格中的重复描述，保留所有模块名称、公式、维度标注和核心结构；避免冗余修饰词
 3. **领域自适应**：根据论文领域（CV、NLP、Robotics、医学等）调整缩略图和图标选择
 4. **参考图优先**：如果用户提供了参考图，配色和布局以参考图为准，覆盖预设方案
-5. **批量生成**：当用户要求为整篇论文生成配图时，按章节组织，并给出优先级建议
+5. **配图数量**：当用户要求为整篇论文生成配图时，配图类型为整体架构图
 6. **图中文字来源**：所有图中文字必须从输入原文中提取，不得凭空创建。对于 LaTeX 源文件，图中文字应来自 `\caption`、`\label`、章节标题、`\section`、公式符号、表格内容等；对于 PDF/Word 文档，从正文段落、标题、图表标题中提取

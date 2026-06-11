@@ -7,10 +7,10 @@ export function Layout() {
     const [sidebarOpen, setSidebarOpen] = useState(false);
 
     const navItems = [
-        { name: '项目列表', path: '/projects', icon: LayoutDashboard },
+        { name: '论文列表', path: '/projects', icon: LayoutDashboard },
         { name: '配色管理', path: '/color-schemes', icon: Palette },
         { name: '设置', path: '/settings', icon: Settings },
-        { name: '快捷生成', path: '/generate', icon: Zap },
+        { name: '配图生成', path: '/generate', icon: Zap },
     ];
 
     const SidebarContent = () => (
@@ -24,7 +24,7 @@ export function Layout() {
                 >
                     <img src="/logo.jpg" alt="Logo" className="w-8 h-8 rounded-lg flex-shrink-0" />
                     <span className="font-semibold text-sm text-foreground leading-tight group-hover:text-primary transition-colors">
-                        科研配图生成器
+                        论文生成器
                     </span>
                 </Link>
             </div>
@@ -122,7 +122,7 @@ export function Layout() {
                     </button>
                     <Link to="/projects" className="flex items-center space-x-2">
                         <img src="/logo.jpg" alt="Logo" className="w-6 h-6 rounded" />
-                        <span className="font-semibold text-sm text-foreground">科研配图生成器</span>
+                        <span className="font-semibold text-sm text-foreground">论文生成器</span>
                     </Link>
                 </div>
 

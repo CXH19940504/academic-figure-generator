@@ -156,7 +156,7 @@ npm run dev
 
 | 服务 | 地址 |
 |------|------|
-| 应用首页 | http://localhost:5173 |
+| 应用首页 | http://localhost:8081 |
 | API 文档 (Swagger) | http://localhost:8000/docs |
 
 ## 使用流程
@@ -212,7 +212,7 @@ FastAPI 后端 (localhost:8000)
 | `DATABASE_PATH` | 否 | `./data/app.db` | SQLite 数据库路径 |
 | `DATA_DIR` | 否 | `./data` | 数据存储目录 |
 | `DEBUG` | 否 | `true` | 调试模式 (启用 API 文档) |
-| `CORS_ORIGINS` | 否 | `["http://localhost:3000","http://localhost:5173"]` | CORS 允许来源 |
+| `CORS_ORIGINS` | 否 | `["http://localhost:3000","http://localhost:8081"]` | CORS 允许来源 |
 | `MAX_UPLOAD_SIZE_MB` | 否 | `50` | 最大上传文件大小 (MB) |
 
 ## AI 学术配图 Prompt 技能（AI Coding Agent Skill）
@@ -279,7 +279,7 @@ ruff format app/
 
 ```bash
 cd frontend
-npm run dev     # 启动开发服务器 (localhost:5173)
+npm run dev     # 启动开发服务器 (localhost:8081)
 npm run build   # 生产构建
 npm run lint    # ESLint 检查
 ```

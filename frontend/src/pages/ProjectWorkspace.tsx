@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { FileUp, FileText, Image as ImageIcon, Send, RefreshCw, Download, ChevronLeft, ChevronRight, ScanText, FileDown, AlertCircle, CheckCircle2, Loader2, Eye } from 'lucide-react';
+import { FileUp, FileText, Image as ImageIcon, Send, RefreshCw, Download, ChevronLeft, ChevronRight, ScanText, FileDown, AlertCircle, CheckCircle2, Loader2, Eye, Pencil, Copy, Check } from 'lucide-react';
 
 import api from '../lib/api';
 import { useProjectStore } from '../store/projectStore';
@@ -13,6 +13,7 @@ import { Badge } from '../components/ui/badge';
 import { ScrollArea } from '../components/ui/scroll-area';
 import { Textarea } from '../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 
 type DocumentItem = {
     id: string;
@@ -62,7 +63,7 @@ export function ProjectWorkspace() {
     const [isPreviewing, setIsPreviewing] = useState<Record<string, boolean>>({});
     const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
     const previewUrlsRef = useRef<Record<string, string>>({});
-    const [promptMode, setPromptMode] = useState<'overall' | 'sections'>('overall');
+    const [promptMode, setPromptMode] = useState<'overall' | 'sections'>('sections');
     const [promptRequest, setPromptRequest] = useState('');
     const [templateMode, setTemplateMode] = useState(false);
     const [selectedSectionIndices, setSelectedSectionIndices] = useState<number[]>([]);
@@ -72,6 +73,9 @@ export function ProjectWorkspace() {
     const structureInitRef = useRef<string | null>(null);
     const [ocrLoading, setOcrLoading] = useState<Record<string, boolean>>({});
     const [activePreviewIdx, setActivePreviewIdx] = useState<number | null>(null);
+    const [promptViewer, setPromptViewer] = useState<{open: boolean; content: string; title: string}>({open: false, content: '', title: ''});
+    const [copiedFeedback, setCopiedFeedback] = useState(false);
+    const [copiedSectionFeedback, setCopiedSectionFeedback] = useState(0);
 
     type SectionNode = {
         idx: number;
@@ -685,6 +689,48 @@ export function ProjectWorkspace() {
                                             <span className="text-xs text-muted-foreground">第 {(activeSection as any).page_start + 1} 页</span>
                                         )}
                                     </div>
+                                    {copiedSectionFeedback > 0 ? (
+                                        <span className="ml-auto shrink-0 text-xs text-green-600 font-medium animate-in fade-in">
+                                            已复制 {copiedSectionFeedback} 字符
+                                        </span>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            className="ml-auto shrink-0 p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                                            title="复制章节内容"
+                                            disabled={!((activeSection as any).content || (activeSection as any).text)}
+                                            onClick={() => {
+                                                const content = ((activeSection as any).content || (activeSection as any).text || '').toString();
+                                                if (!content) return;
+                                                let ok = false;
+                                                const ta = document.createElement('textarea');
+                                                ta.value = content;
+                                                ta.style.position = 'fixed';
+                                                ta.style.left = '-9999px';
+                                                ta.style.top = '-9999px';
+                                                document.body.appendChild(ta);
+                                                ta.focus();
+                                                ta.select();
+                                                try { ok = document.execCommand('copy'); } catch { /* ignore */ }
+                                                document.body.removeChild(ta);
+                                                if (typeof navigator?.clipboard?.writeText === 'function') {
+                                                    navigator.clipboard.writeText(content).then(() => {
+                                                        setCopiedSectionFeedback(content.length);
+                                                        setTimeout(() => setCopiedSectionFeedback(0), 2000);
+                                                    }).catch((e) => console.error('复制失败:', e));
+                                                    return;
+                                                }
+                                                if (ok) {
+                                                    setCopiedSectionFeedback(content.length);
+                                                    setTimeout(() => setCopiedSectionFeedback(0), 2000);
+                                                } else {
+                                                    console.error('复制章节内容失败: 两种方式均不可用');
+                                                }
+                                            }}
+                                        >
+                                            <Copy className="w-4 h-4" />
+                                        </button>
+                                    )}
                                 </div>
                                 <div className="text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap break-words">
                                     {((activeSection as any).content || (activeSection as any).text || '（无内容预览）').slice(0, 2000)}
@@ -706,7 +752,8 @@ export function ProjectWorkspace() {
     };
 
     return (
-        <div className="h-[calc(100vh-6rem)] flex gap-4 overflow-hidden">
+        <>
+            <div className="h-[calc(100vh-6rem)] flex gap-4 overflow-hidden">
 
             {/* Column 1: Parsed Structure (primary) */}
             {showStructure ? (
@@ -1093,6 +1140,18 @@ export function ProjectWorkspace() {
                                                         <Button
                                                             size="sm"
                                                             variant="ghost"
+                                                            onClick={() => {
+                                                                const content = latestImg?.final_prompt_sent || prompt.original_prompt || prompt.edited_prompt || '';
+                                                                setPromptViewer({open: true, content, title: prompt.title || `Figure ${prompt.figure_number ?? ''}`});
+                                                            }}
+                                                            title="查看生成 Prompt"
+                                                        >
+                                                            <Eye className="mr-1 h-3 w-3" />
+                                                            Prompt
+                                                        </Button>
+                                                        <Button
+                                                            size="sm"
+                                                            variant="ghost"
                                                             disabled={!isCompleted || isDownloading === latestImg.id}
                                                             onClick={() => handleDownloadImage(latestImg.id)}
                                                         >
@@ -1143,5 +1202,48 @@ export function ProjectWorkspace() {
                 </ScrollArea>
             </div>
         </div>
+
+        {/* Prompt Viewer Dialog */}
+        <Dialog open={promptViewer.open} onOpenChange={(open) => { if (!open) { setPromptViewer({open: false, content: '', title: ''}); setCopiedFeedback(false); } }}>
+            <DialogContent className="max-w-2xl max-h-[85vh]">
+                <DialogHeader>
+                    <DialogTitle>生成图片的 Prompt</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-3">
+                    {promptViewer.title && (
+                        <p className="text-sm text-muted-foreground">{promptViewer.title}</p>
+                    )}
+                    <div className="relative">
+                        <pre className="whitespace-pre-wrap text-sm bg-muted p-4 pr-14 rounded-md max-h-[55vh] overflow-y-auto text-foreground/85 leading-relaxed">
+                            {promptViewer.content || '暂无 Prompt 内容'}
+                        </pre>
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            className="absolute top-2 right-2"
+                            disabled={!promptViewer.content}
+                            onClick={async () => {
+                                if (!promptViewer.content) return;
+                                try {
+                                    await navigator.clipboard.writeText(promptViewer.content);
+                                    setCopiedFeedback(true);
+                                    setTimeout(() => setCopiedFeedback(false), 2000);
+                                } catch {
+                                    // fallback
+                                }
+                            }}
+                        >
+                            {copiedFeedback ? (
+                                <><Check className="h-3.5 w-3.5 mr-1" /> 已复制</>
+                            ) : (
+                                <><Copy className="h-3.5 w-3.5 mr-1" /> 复制</>
+                            )}
+                        </Button>
+                    </div>
+                </div>
+            </DialogContent>
+        </Dialog>
+        </>
     );
 }
+

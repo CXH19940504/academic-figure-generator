@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from app.config import get_settings
-from app.core.exceptions import BadRequestException, NotFoundException
+from app.core.exceptions import BadRequestException, ExternalAPIException, NotFoundException
 from app.dependencies import get_db
 from app.models.image import Image
 from app.models.project import Project
@@ -113,10 +113,39 @@ async def _generate_image_async(
                 ),
             )
 
-            # Decode base64 result to bytes and save locally
-            image_b64 = generated_data.get("image_base64", "")
+            # Decode / download image data and save locally
+            image_data = generated_data.get("image_data", {})
+            image_b64 = image_data.get("b64_json", "")
+            image_url = image_data.get("url", "")
+
             if image_b64:
+                # Inline base64 — decode directly
                 image_bytes = base64.b64decode(image_b64)
+            elif image_url:
+                # URL download link — fetch image bytes
+                import httpx  # noqa: PLC0415
+
+                logger.info("Downloading generated image from URL: %s", image_url[:120])
+                try:
+                    async with httpx.AsyncClient(timeout=120.0) as client:
+                        dl_response = await client.get(image_url)
+                        dl_response.raise_for_status()
+                        image_bytes = dl_response.content
+                    logger.info("Downloaded image: %d bytes", len(image_bytes))
+                except httpx.HTTPError as exc:
+                    logger.error(
+                        "Failed to download image from URL %s: %s", image_url, exc
+                    )
+                    raise ExternalAPIException(
+                        "NanoBanana",
+                        f"Failed to download image from {image_url}: {exc}",
+                    ) from exc
+            else:
+                raise ExternalAPIException(
+                    "NanoBanana", "No image data (neither b64_json nor url)"
+                )
+
+            if image_bytes:
                 file_name = f"{image_id}.png"
                 storage_path = storage.save_figure(
                     f"{image.project_id}/{file_name}", image_bytes

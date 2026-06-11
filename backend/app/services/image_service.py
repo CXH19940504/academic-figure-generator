@@ -90,7 +90,9 @@ class ImageService:
         Returns
         -------
         dict
-            ``{"image_base64": str, "width": int, "height": int, "duration_ms": int}``
+            ``{"image_data": dict, "width": int, "height": int, "duration_ms": int}``
+            ``image_data`` is the raw ``data[0]`` from the API response, containing
+            ``b64_json`` (base64 inline) and/or ``url`` (download link) fields.
 
         Raises
         ------
@@ -167,10 +169,11 @@ class ImageService:
 
         duration_ms = int((time.monotonic() - start_time) * 1000)
 
-        # Extract image data from the response.
+        # Extract raw image data from the response.
         # Supports two formats:
         #   1. OpenAI-compatible: data[0].b64_json (base64 inline)
         #   2. Zhipu BigModel:    data[0].url (HTTPS download link)
+        # The caller (_generate_image_async) handles b64_json vs url resolution.
         data_list = result.get("data", [])
         if not data_list:
             raise ExternalAPIException(
@@ -179,31 +182,7 @@ class ImageService:
 
         image_data = data_list[0]
 
-        # Try inline base64 first, then fall back to URL download
-        image_base64 = image_data.get("b64_json", "")
-        image_url = image_data.get("url", "")
-
-        if not image_base64 and image_url:
-            logger.info("Downloading generated image from URL: %s", image_url[:120])
-            try:
-                with httpx.Client(timeout=120.0) as client:
-                    dl_response = client.get(image_url)
-                    dl_response.raise_for_status()
-                    image_bytes = dl_response.content
-                    image_base64 = base64.b64encode(image_bytes).decode("utf-8")
-                    logger.info(
-                        "Downloaded image: %d bytes → %d base64 chars",
-                        len(image_bytes),
-                        len(image_base64),
-                    )
-            except httpx.HTTPError as exc:
-                logger.error("Failed to download image from URL %s: %s", image_url, exc)
-                raise ExternalAPIException(
-                    "NanoBanana",
-                    f"Failed to download image from {image_url}: {exc}",
-                ) from exc
-
-        if not image_base64:
+        if not image_data.get("b64_json") and not image_data.get("url"):
             raise ExternalAPIException(
                 "NanoBanana",
                 "No image data in response (neither b64_json nor url present)",
@@ -219,7 +198,7 @@ class ImageService:
         )
 
         return {
-            "image_base64": image_base64,
+            "image_data": image_data,
             "width": width,
             "height": height,
             "duration_ms": duration_ms,

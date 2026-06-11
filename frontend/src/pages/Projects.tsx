@@ -122,7 +122,7 @@ export function Projects() {
         <div className="space-y-6">
             <div className="flex justify-between items-center flex-wrap gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold tracking-tight">我的项目</h1>
+                    <h1 className="text-3xl font-bold tracking-tight">我的论文</h1>
                     <p className="text-muted-foreground mt-1">管理您的论文配图项目及文档</p>
                 </div>
 
@@ -130,7 +130,7 @@ export function Projects() {
                     <DialogTrigger asChild>
                         <Button>
                             <Plus className="w-4 h-4 mr-2" />
-                            新建项目
+                            新建论文
                         </Button>
                     </DialogTrigger>
                     <DialogContent className="sm:max-w-[500px]">
@@ -211,7 +211,7 @@ export function Projects() {
                     </p>
                     <Button className="mt-6" onClick={() => setIsCreateModalOpen(true)}>
                         <Plus className="w-4 h-4 mr-2" />
-                        新建项目
+                        新建论文
                     </Button>
                 </Card>
             ) : (

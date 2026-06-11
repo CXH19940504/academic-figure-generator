@@ -1,5 +1,6 @@
 """Prompt generation and management endpoints — personal-use (no auth, no Celery)."""
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends
@@ -7,8 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestException, NotFoundException
+from app.core.prompts.color_schemes import DEFAULT_COLOR_SCHEME, PRESET_COLOR_SCHEMES
 from app.dependencies import get_db
 from app.models.document import Document
+from app.models.image import Image
 from app.models.project import Project
 from app.models.prompt import Prompt
 from app.schemas.prompt import (
@@ -94,25 +97,47 @@ async def generate_prompts(
         raise BadRequestException("No sections available for prompt generation.")
 
     # Resolve color scheme
-    from app.core.prompts.color_schemes import DEFAULT_COLOR_SCHEME, PRESET_COLOR_SCHEMES  # noqa: PLC0415
-
     color_scheme = data.custom_colors or PRESET_COLOR_SCHEMES.get(
         data.color_scheme or DEFAULT_COLOR_SCHEME,
         PRESET_COLOR_SCHEMES[DEFAULT_COLOR_SCHEME],
     )
 
-    # Call Claude via Agent SDK
-    claude_service = ClaudeCodeService()
-    result_data = await claude_service.generate_figure_prompts(
-        sections=sections,
-        color_scheme=color_scheme,
-        paper_field=project.paper_field,
-        figure_types=data.figure_types,
-        user_request=data.user_request,
-        max_figures=data.max_figures,
-    )
+    # --- When figure_types is None (sections mode), auto-generate one image per prompt ---
+    if data.figure_types is None and len(sections) > 0:
+        # 1. 为每个章节创建异步任务
+        tasks = [
+            asyncio.create_task(ClaudeCodeService().generate_figure_prompts(
+                sections=[section],
+                color_scheme=color_scheme,
+                paper_field=project.paper_field,
+                figure_types=data.figure_types,
+                user_request=data.user_request,
+                max_figures=1,
+            ))
+            for section in sections
+        ]
 
-    figures = result_data.get("figures", [])
+        # 2. 并发执行所有任务
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 3. 收集结果
+        figures = []
+        for idx, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error("Section %d failed: %s", idx, result)
+                continue
+            figures.extend(result.get("figures", []))
+    else:
+        result_data = await ClaudeCodeService().generate_figure_prompts(
+            sections=sections,
+            color_scheme=color_scheme,
+            paper_field=project.paper_field,
+            figure_types=data.figure_types,
+            user_request=data.user_request,
+            max_figures=data.max_figures,
+        )
+        figures = result_data.get("figures", [])
+
     if not figures:
         raise BadRequestException("Claude did not generate any figure prompts. Try again.")
 
@@ -122,7 +147,7 @@ async def generate_prompts(
         project_id=project.id,
         document_id=document.id,
         figures=figures,
-        claude_model="claude-agent-sdk",
+        claude_model=settings.CLAUDE_MODEL_NAME,
     )
 
     logger.info(
