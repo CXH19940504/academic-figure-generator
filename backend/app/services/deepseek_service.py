@@ -16,8 +16,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from backend.app.models.document import Section
-from backend.app.schemas.document import MaterialType
+from app.models.document import Section
+from app.schemas.document import MaterialType
 import httpx
 
 from app.config import get_settings
@@ -28,7 +28,7 @@ settings = get_settings()
 
 
 # Path to SKILL.md relative to project root
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 
 class SystemPromptName(Enum):

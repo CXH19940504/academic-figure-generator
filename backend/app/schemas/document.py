@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import IntEnum
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class PaperType(IntEnum):
@@ -115,7 +115,7 @@ class DocumentResponse(BaseModel):
     title: Optional[str] = None  # 论文标题
     paper_type: Optional[int] = None  # 论文类型
     subject_code: Optional[str] = None  # 学科代码
-    template_id: Optional[int] = None  # 排版模板ID
+    template_id: Optional[str] = None  # 排版模板ID
     original_filename: str
     file_type: str
     file_size_bytes: int
@@ -132,7 +132,7 @@ class DocumentCreate(BaseModel):
     title: str  # 论文标题
     paper_type: int  # 论文类型
     subject_code: str  # 学科代码
-    template_id: Optional[int] = None  # 排版模板ID
+    template_id: Optional[str] = None  # 排版模板ID
 
 
 class OutlineGenerateRequest(BaseModel):
@@ -143,7 +143,7 @@ class OutlineGenerateRequest(BaseModel):
     subject_name: str = Field(default="", description="学科名称（参考教育部学科分类）")
     degree: str = Field(default="本科", description="学历层次：大专/本科/硕士/博士/MBA")
     word_count: int = Field(default=15000, ge=5000, le=100000, description="目标字数")
-    template_id: int | None = Field(default=None, description="排版模板ID")
+    template_id: str | None = Field(default=None, description="排版模板ID")
 
 
 class OutlineGenerateDirectRequest(BaseModel):

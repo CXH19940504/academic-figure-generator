@@ -76,11 +76,11 @@ class Template(Base, TimestampMixin):
         primary_key=True,
         default=new_uuid,
     )
-    project_id: Mapped[str] = mapped_column(
+    project_id: Mapped[Optional[str]] = mapped_column(
         String(36),
-        ForeignKey("projects.id", ondelete="CASCADE"),
-        nullable=False,
-        comment="关联的项目ID",
+        ForeignKey("projects.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="关联的项目ID（全局模板时为空）",
     )
     name: Mapped[str] = mapped_column(
         String(200),

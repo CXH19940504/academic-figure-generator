@@ -67,8 +67,8 @@ export function Outline() {
    // 自定义prompt状态
    const [outlinePrompt, setOutlinePrompt] = useState('');
    const [isRefreshing, setIsRefreshing] = useState(false);
-   const [templates, setTemplates] = useState<{ id: number; name: string }[]>([]);
-   const [selectedTemplate, setSelectedTemplate] = useState<number | null>(null);
+   const [templates, setTemplates] = useState<{ id: string; name: string }[]>([]);
+   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
    const [loadingTemplates, setLoadingTemplates] = useState(false);
 
    // 结果状态
@@ -103,16 +103,9 @@ export function Outline() {
       const loadTemplates = async () => {
          setLoadingTemplates(true);
          try {
-            // 获取项目列表中的第一个项目作为模板来源
-            const projectsResponse = await api.get('/projects?page_size=1');
-            const projects = projectsResponse.data?.items || [];
-
-            if (projects.length > 0) {
-               const response = await api.get(`/templates`);
-               setTemplates(response.data || []);
-            }
+            const response = await api.get('/templates');
+            setTemplates(response.data || []);
          } catch {
-            // 忽略错误，使用空模板列表
             setTemplates([]);
          } finally {
             setLoadingTemplates(false);
@@ -408,8 +401,8 @@ export function Outline() {
                      <div className="space-y-2">
                         <label className="text-sm font-medium">排版模板（可选）</label>
                         <Select
-                           value={selectedTemplate ? String(selectedTemplate) : 'none'}
-                           onValueChange={v => setSelectedTemplate(v === 'none' ? null : Number(v))}
+                           value={selectedTemplate ?? 'none'}
+                           onValueChange={v => setSelectedTemplate(v === 'none' ? null : v)}
                            disabled={loadingTemplates}
                         >
                            <SelectTrigger>
@@ -438,7 +431,7 @@ export function Outline() {
                      <Textarea
                         placeholder="尚未设置prompt..."
                         className="min-h-[120px]"
-                        value={outline_prompt}
+                        value={outlinePrompt}
                         onChange={e => setOutlinePrompt(e.target.value)}
                      />
                   </CardContent>
@@ -551,35 +544,6 @@ export function Outline() {
                         </div>
                      </CardFooter>
                   )}
-               </Card>
-
-               {/* 当前配置预览 */}
-               <Card>
-                  <CardHeader>
-                     <CardTitle className="text-base">当前配置</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2 text-sm">
-                     <div className="flex justify-between">
-                        <span className="text-muted-foreground">论文类型</span>
-                        <span>{PAPER_TYPES.find(p => p.value === paperType)?.label}</span>
-                     </div>
-                     <div className="flex justify-between">
-                        <span className="text-muted-foreground">学科</span>
-                        <span>{currentSubject?.name}</span>
-                     </div>
-                     <div className="flex justify-between">
-                        <span className="text-muted-foreground">学历层次</span>
-                        <span>{degree}</span>
-                     </div>
-                     <div className="flex justify-between">
-                        <span className="text-muted-foreground">目标字数</span>
-                        <span>{wordCount >= 10000 ? `${wordCount / 10000}万字` : `${wordCount}字`}</span>
-                     </div>
-                     <div className="flex justify-between">
-                        <span className="text-muted-foreground">大纲级别</span>
-                        <span>{outlineLevel} 级</span>
-                     </div>
-                  </CardContent>
                </Card>
             </div>
          </div>

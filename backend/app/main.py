@@ -157,6 +157,7 @@ def _include_routers(app: FastAPI, prefix: str) -> None:
     router_modules = [
         ("app.api.v1.health", "router"),
         ("app.api.v1.projects", "router"),
+        ("app.api.v1.templates", "router"),
         ("app.api.v1.documents", "router"),
         ("app.api.v1.prompts", "router"),
         ("app.api.v1.images", "router"),

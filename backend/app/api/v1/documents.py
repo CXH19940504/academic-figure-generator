@@ -9,7 +9,8 @@ from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import NotFoundException
 from app.dependencies import get_db
-from app.models.document import Document, Section, PaperType
+from app.models.document import Document, Section
+from app.schemas.document import PaperType
 from app.models.project import Project, Template
 from app.schemas.document import DocumentCreate, DocumentResponse, OutlineGenerateRequest, OutlineGenerateDirectRequest, OutlineGenerateResponse
 from app.services.local_storage_service import LocalStorageService
@@ -52,7 +53,7 @@ async def _get_project_or_create(project_id: str | None, db: AsyncSession, proje
     return project
 
 
-async def _get_template(template_id: int, db: AsyncSession) -> Template:
+async def _get_template(template_id: str, db: AsyncSession) -> Template:
     result = await db.execute(select(Template).where(Template.id == template_id))
     template: Template | None = result.scalar_one_or_none()
     if template is None:

@@ -106,6 +106,7 @@ async def generate_prompts(
     )
 
     # --- When figure_types is None (sections mode), auto-generate one image per prompt ---
+    total_duration_ms = 0
     if data.figure_types is None and len(sections) > 0:
         # 1. 为每个章节创建异步任务
         tasks = [
@@ -130,6 +131,7 @@ async def generate_prompts(
                 logger.error("Section %d failed: %s", idx, result)
                 continue
             figures.extend(result.get("figures", []))
+            total_duration_ms += result.get("duration_ms", 0)
     else:
         result_data = await ClaudeCodeService().generate_figure_prompts(
             sections=sections,
@@ -140,6 +142,7 @@ async def generate_prompts(
             max_figures=data.max_figures,
         )
         figures = result_data.get("figures", [])
+        total_duration_ms = result_data.get("duration_ms", 0)
 
     if not figures:
         raise BadRequestException("Claude did not generate any figure prompts. Try again.")
@@ -157,7 +160,7 @@ async def generate_prompts(
         "Generated %d prompts for project %s in %d ms",
         len(prompts),
         project.id,
-        result_data.get("duration_ms", 0),
+        total_duration_ms,
     )
 
     return [_prompt_to_response(p) for p in prompts]
