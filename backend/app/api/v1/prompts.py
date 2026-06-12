@@ -53,8 +53,6 @@ def _prompt_to_response(p: Prompt) -> PromptResponse:
         source_sections=p.source_sections,
         claude_model=p.claude_model,
         generation_status=p.generation_status,
-        created_at=p.created_at,
-        updated_at=p.updated_at,
     )
 
 

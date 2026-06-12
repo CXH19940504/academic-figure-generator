@@ -9,7 +9,7 @@ from app.schemas.document import MaterialType
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, TimestampMixin, new_uuid
+from .base import Base, new_uuid
 
 if TYPE_CHECKING:
     from .document import Document
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from .project import Project
 
 
-class Prompt(Base, TimestampMixin):
+class Prompt(Base):
     __tablename__ = "prompts"
 
     id: Mapped[str] = mapped_column(

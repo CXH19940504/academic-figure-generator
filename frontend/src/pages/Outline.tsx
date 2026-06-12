@@ -94,6 +94,7 @@ export function Outline() {
    const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
    const [loadingDocuments, setLoadingDocuments] = useState(false);
    const [documentId, setDocumentId] = useState<string | null>(null);
+   const [promptId, setPromptId] = useState<string | null>(null);
 
    // 首次加载标志符
    const firstLoadRef = useRef(true);
@@ -156,6 +157,7 @@ export function Outline() {
             const latestPrompt = prompts[0];
             const promptContent = latestPrompt.edited_prompt || latestPrompt.original_prompt || '';
             setOutlinePrompt(promptContent);
+            setPromptId(latestPrompt.id || null);
          }
       } catch (error) {
          console.error('获取文档 prompts 失败:', error);
@@ -212,7 +214,9 @@ export function Outline() {
 
       try {
          const response = await api.post('/outline/generate-direct', {
-            project_id: null,  // 直接生成模式，不关联项目
+            project_id: projectId,  // 直接生成模式，不关联项目
+            document_id: documentId,
+            prompt_id: promptId,
             title,
             outline_prompt: outlinePrompt,
          });
@@ -255,7 +259,9 @@ export function Outline() {
       try {
          // 第一步：创建 Prompt 并获取 system_prompt
          const promptResponse = await api.post('/outline/prompt', {
-            project_id: null,
+            project_id: projectId,
+            document_id: documentId,
+            prompt_id: promptId,
             title,
             paper_type: paperType,
             subject_code: subjectCode,

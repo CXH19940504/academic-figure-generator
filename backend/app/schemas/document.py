@@ -164,6 +164,7 @@ class OutlineGenerateResponse(BaseModel):
 class OutlinePromptCreateRequest(BaseModel):
     """创建大纲Prompt的请求"""
     project_id: str | None = Field(default=None, description="项目ID，用于关联项目模板。")
+    document_id: str | None = Field(default=None, description="文档ID，用于关联文档。")
     title: str = Field(..., min_length=10, max_length=500, description="论文标题")
     paper_type: int = Field(default=1, ge=1, le=4, description="论文类型：1=毕业论文, 2=期刊论文, 3=实习报告, 4=调查报告")
     subject_code: str = Field(default="08", description="学科代码（参考教育部学科分类）")

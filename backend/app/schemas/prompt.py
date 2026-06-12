@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict
 
 
@@ -29,8 +27,6 @@ class PromptResponse(BaseModel):
     source_sections: dict | list | None
     claude_model: str | None
     generation_status: str
-    created_at: datetime
-    updated_at: datetime | None
 
 
 class PromptUpdate(BaseModel):

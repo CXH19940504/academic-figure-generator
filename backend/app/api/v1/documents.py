@@ -33,6 +33,13 @@ async def _get_project(project_id: str, db: AsyncSession) -> Project:
         raise NotFoundException("Project not found")
     return project
 
+async def _get_document(document_id: str, db: AsyncSession) -> Document:
+    result = await db.execute(select(Document).where(Document.id == document_id))
+    document: Document | None = result.scalar_one_or_none()
+    if document is None:
+        raise NotFoundException("Document not found")
+    return document
+
 
 async def _get_project_or_create(project_id: str | None, db: AsyncSession, project_name: str) -> Project:
     if project_id is None:
@@ -64,6 +71,14 @@ async def _get_template(template_id: str, db: AsyncSession) -> Template:
     if template is None:
         raise NotFoundException("Template not found")
     return template
+
+
+async def _get_prompt(prompt_id: str, db: AsyncSession) -> Prompt:
+    result = await db.execute(select(Prompt).where(Prompt.id == prompt_id))
+    prompt: Prompt | None = result.scalar_one_or_none()
+    if prompt is None:
+        raise NotFoundException("Prompt not found")
+    return prompt
 
 
 @router.get("/projects/{project_id}/documents", response_model=list[DocumentResponse])
@@ -174,7 +189,7 @@ def _build_outline_system_prompt(params: dict) -> str:
     service = DeepseekService()
     system_prompt = service._get_skill_content(SystemPromptName.OUTLINE.value)
     for key, value in params.items():
-        system_prompt = system_prompt.replace("{% " + key + " %}", str(value))
+        system_prompt = system_prompt.replace("{% " + key + " %}", str(value or ""))
     return system_prompt
 
 
@@ -211,60 +226,64 @@ async def create_outline_prompt(
     Returns:
         Created prompt with ID and system prompt.
     """
+    # 1. 获取或创建项目
     project = await _get_project_or_create(data.project_id, db, "直接生成大纲")
     project_id = project.id
-    
+
+    # 2. 获取模板
     if data.template_id is not None:
         template = await _get_template(data.template_id, db)
-        original_filename = template.storage_path.split("/")[-1]
-        template_content = template.content
     else:
-        template = None
-        original_filename = ""
-        template_content = ""
+        raise BadRequestException("template_id is required")
+    template_content = template.content
 
-    # 创建 Document
-    document = Document(
-        project_id=project_id,
-        uuid="",
-        title=data.title,
-        paper_type=data.paper_type,
-        subject_code=data.subject_code,
-        template_id=data.template_id,
-        original_filename=original_filename,
-        file_type="",
-        file_size_bytes=data.word_count,
-        storage_path="",
-        parse_status="generating",
-    )
-    db.add(document)
-    await db.flush()
+    # 3.获取或创建文档
+    if data.document_id is not None:
+        document = await _get_document(data.document_id, db)
+    else:
+        # 创建 Document
+        document = Document(uuid="", storage_path="")
+    
+    document.project_id = project_id
+    document.title = data.title
+    document.paper_type = data.paper_type
+    document.subject_code = data.subject_code
+    document.template_id = data.template_id
+    document.original_filename = template.storage_path.split("/")[-1]
+    document.file_type = template.storage_path.split(".")[-1]
+    document.file_size_bytes = data.word_count
+    document.parse_status = "generating"
+    if data.document_id is None:
+        db.add(document)
+        await db.flush()
     await db.refresh(document)
     document_id = document.id
 
-
-    # 构建 system prompt
-    params = dict(
-        major_name=get_subject_name_by_code(data.subject_code),
-        paper_title=data.title,
-        word_count=data.word_count,
-        paper_type=(data.degree or "") + " " + PaperType.get_name(data.paper_type),
-        template_content=template_content,
-    )
+    # 4. 构建 system prompt
+    params = {
+        "major_name": get_subject_name_by_code(data.subject_code),
+        "paper_title": data.title,
+        "word_count": data.word_count,
+        "paper_type": data.degree or "" + PaperType.get_name(data.paper_type),
+        "template_content": template_content,
+    }
     system_prompt = _build_outline_system_prompt(params)
 
-    # 创建 Prompt
-    prompt = Prompt(
-        project_id=project_id,
-        document_id=document_id,
-        figure_number=0,
-        title=data.title,
-        material_type=MaterialType.OUTLINE.value,
-        original_prompt=system_prompt,
-        edited_prompt=system_prompt,
-    )
-    db.add(prompt)
-    await db.flush()
+    # 5. 获取或创建 Prompt
+    if data.prompt_id is not None:
+        prompt = await _get_prompt(data.prompt_id, db)
+    else:
+        prompt = Prompt(
+            project_id=project_id,
+            document_id=document_id,
+            figure_number=0,
+            original_prompt=system_prompt,
+        )
+        db.add(prompt)
+        await db.flush()
+    prompt.title = data.title
+    prompt.material_type = MaterialType.OUTLINE.value
+    prompt.edited_prompt = system_prompt
     await db.refresh(prompt)
 
     return OutlinePromptResponse(
@@ -350,35 +369,45 @@ async def generate_outline_direct(
     """使用自定义prompt生成大纲"""
     if not data.outline_prompt:
         raise ValueError("自定义系统prompt不能为空")
+    # 1. 获取或创建项目
     project = await _get_project_or_create(data.project_id, db, "直接生成大纲")
     project_id = project.id
-    # 每一次修改prompt，创建新文档记录
-    document = Document(
-        project_id=project_id,
-        uuid="",
-        title=data.title,
-        original_filename="",
-        file_type="",
-        file_size_bytes=0,
-        storage_path="",
-        parse_status="generating",
-    )
-    db.add(document)
-    await db.flush()
+    # 2.获取或创建文档
+    if data.document_id is not None:
+        document = await _get_document(data.document_id, db)
+    else:
+        # 创建 Document
+        document = Document(
+            uuid="",
+            original_filename="",
+            file_type="",
+            file_size_bytes=0,
+            storage_path=""
+        )
+        db.add(document)
+        await db.flush()
+
+    document.project_id = project_id
+    document.title = data.title
+    document.parse_status = "generating"
     await db.refresh(document)
     document_id = document.id
-    # 创建 Prompt
-    prompt = Prompt(
-        project_id=project_id,
-        document_id=document_id,
-        figure_number=0,
-        title=data.title,
-        material_type=MaterialType.OUTLINE.value,
-        original_prompt="",
-        edited_prompt=data.outline_prompt,
-    )
-    db.add(prompt)
-    await db.flush()
+
+    # 3. 获取或创建 Prompt
+    if data.prompt_id is not None:
+        prompt = await _get_prompt(data.prompt_id, db)
+    else:
+        prompt = Prompt(
+            project_id=project_id,
+            document_id=document_id,
+            figure_number=0,
+            original_prompt="",
+        )
+        db.add(prompt)
+        await db.flush()
+    prompt.title = data.title
+    prompt.material_type = MaterialType.OUTLINE.value
+    prompt.edited_prompt = data.outline_prompt
     await db.refresh(prompt)
     
     service = DeepseekService()
