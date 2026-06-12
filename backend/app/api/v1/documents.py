@@ -10,9 +10,13 @@ from sqlalchemy.orm import selectinload
 from app.core.exceptions import NotFoundException
 from app.dependencies import get_db
 from app.models.document import Document, Section
-from app.schemas.document import PaperType
+from app.models.prompt import Prompt
+from app.schemas.document import MaterialType, PaperType
 from app.models.project import Project, Template
-from app.schemas.document import DocumentCreate, DocumentResponse, OutlineGenerateRequest, OutlineGenerateDirectRequest, OutlineGenerateResponse
+from app.schemas.document import (
+    DocumentCreate, DocumentResponse, OutlineGenerateRequest, OutlineGenerateResponse,
+    OutlinePromptCreateRequest, OutlinePromptResponse
+)
 from app.services.local_storage_service import LocalStorageService
 from app.services.deepseek_service import DeepseekService
 
@@ -132,21 +136,10 @@ async def upload_document(
         document.page_count = parse_result.get("page_count")
 
         # Create Section records from parsed sections
-        sections_data = parse_result.get("sections", [])
-        for idx, section_data in enumerate(sections_data):
-            section = Section(
-                document_id=document.id,
-                title=section_data.get("title", f"Section {idx + 1}"),
-                level=section_data.get("level", 1),
-                content=section_data.get("content", ""),
-                page_start=section_data.get("page_start"),
-                page_end=section_data.get("page_end"),
-                order_index=idx,
-            )
-            db.add(section)
+        section_count = await _save_sections_to_db(parse_result, document.id, db)
 
         document.parse_status = "completed"
-        logger.info("Document %s parsed successfully: %d sections", document.id, len(sections_data))
+        logger.info("Document %s parsed successfully: %d sections", document.id, section_count)
     except Exception as exc:
         document.parse_status = "failed"
         document.parse_error = str(exc)
@@ -174,23 +167,48 @@ async def get_document(
     return DocumentResponse.model_validate(document)
 
 
-@router.post("/outline/generate", response_model=OutlineGenerateResponse)
-async def generate_outline(
-    data: OutlineGenerateRequest,
+def _build_outline_system_prompt(params: dict) -> str:
+    """构建大纲生成的 system prompt"""
+    from app.services.deepseek_service import DeepseekService, SystemPromptName
+    service = DeepseekService()
+    system_prompt = service._get_skill_content(SystemPromptName.OUTLINE.value)
+    for key, value in params.items():
+        system_prompt = system_prompt.replace("{% " + key + " %}", str(value))
+    return system_prompt
+
+
+async def _save_sections_to_db(result: dict, document_id: str, db: AsyncSession) -> int:
+    """将大纲数据保存到数据库"""
+    sections = result.get("sections", [])
+    for idx, section_data in enumerate(sections):
+        section = Section(
+            document_id=document_id,
+            title=section_data.get("title", f"Section {idx + 1}"),
+            level=section_data.get("level", 1),
+            content="",
+            page_start=None,
+            page_end=None,
+            order_index=idx,
+        )
+        db.add(section)
+    
+    await db.flush()
+    return len(sections)
+
+
+@router.post("/outline/prompt", response_model=OutlinePromptResponse)
+async def create_outline_prompt(
+    data: OutlinePromptCreateRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Generate an outline from paper information.
-
-    Uses Deepseek AI to analyze the provided information and generate a structured
-    outline with the specified parameters.
+    """创建大纲Prompt并插入数据库。
 
     Args:
-        project_id: 项目ID，用于关联项目模板。
-        data: Request body with paper information and generation options.
+        data: Request body with paper information.
         db: Database session.
 
     Returns:
-        Generated outline with items and metadata.
+        Created prompt with ID and system prompt.
     """
     project = await _get_project_or_create(data.project_id, db, "直接生成大纲")
     project_id = project.id
@@ -204,6 +222,7 @@ async def generate_outline(
         original_filename = ""
         template_content = ""
 
+    # 创建 Document
     document = Document(
         project_id=project_id,
         uuid="",
@@ -215,59 +234,118 @@ async def generate_outline(
         file_type="",
         file_size_bytes=data.word_count,
         storage_path="",
-        parse_status="completed",
+        parse_status="generating",
     )
     db.add(document)
     await db.flush()
     await db.refresh(document)
     document_id = document.id
 
+    # 构建 system prompt
+    params = dict(
+        major_name=data.subject_name,
+        paper_title=data.title,
+        word_count=data.word_count,
+        paper_type=(data.degree or "") + " " + PaperType.get_name(data.paper_type),
+        template_content=template_content,
+    )
+    system_prompt = _build_outline_system_prompt(params)
+
+    # 创建 Prompt
+    prompt = Prompt(
+        project_id=project_id,
+        document_id=document_id,
+        material_type=MaterialType.OUTLINE.value,
+        original_prompt=system_prompt,
+        edited_prompt=system_prompt,
+    )
+    db.add(prompt)
+    await db.flush()
+    await db.refresh(prompt)
+
+    return OutlinePromptResponse(
+        success=True,
+        message="Prompt创建成功",
+        prompt_id=prompt.id,
+        document_id=document_id,
+        project_id=project_id,
+        system_prompt=system_prompt,
+    )
+
+
+@router.post("/outline/{prompt_id}/generate", response_model=OutlineGenerateResponse)
+async def generate_outline_by_prompt(
+    prompt_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """根据Prompt ID生成大纲。
+
+    Args:
+        prompt_id: Prompt ID。
+        db: Database session.
+
+    Returns:
+        Generated outline with items and metadata.
+    """
+    # 获取 Prompt
+    result = await db.execute(select(Prompt).where(Prompt.id == prompt_id))
+    prompt: Prompt | None = result.scalar_one_or_none()
+    if prompt is None:
+        raise NotFoundException("Prompt not found")
+    if not prompt.edited_prompt:
+        raise BadRequest("Prompt edited_prompt is empty")   
+    
+    project_id = prompt.project_id
+    document_id = prompt.document_id
+
+    # 获取 Document
+    doc_result = await db.execute(select(Document).where(Document.id == document_id))
+    document: Document | None = doc_result.scalar_one_or_none()
+    if document is None:
+        raise NotFoundException("Document not found")
+
+    # 更新 Document 状态
+    document.parse_status = "generating"
+    await db.flush()
+
     service = DeepseekService()
+    user_prompt = "按要求生成大纲"
+    system_prompt = prompt.edited_prompt
 
     try:
-        params = dict(
-            major_name=data.subject_name,
-            paper_title=data.title,
-            word_count=data.word_count,
-            paper_type= (data.degree or "") + " " + PaperType.get_name(data.paper_type),
-            template_content=template_content,
+        result = await service.generate_txt_from_prompt(
+            user_prompt=user_prompt,
+            system_prompt=system_prompt,
+            material_type=MaterialType.OUTLINE,
         )
-        result = await service.generate_outline(params)
-        sections = result.get("sections", [])
-        # 批量添加Section到数据库
-        for idx, section_data in enumerate(sections):
-            section = Section(
-                document_id=document_id,
-                material_type=section_data.get("material_type", 1),
-                title=section_data.get("title", f"Section {idx + 1}"),
-                level=section_data.get("level", 1),
-                order_index=idx,
-                content=section_data.get("content", ""),
-                page_start=section_data.get("page_start"),
-                page_end=section_data.get("page_end"),
-            )
-            db.add(section)
+        await _save_sections_to_db(result, document_id, db)
+        # 更新 Document 状态
+        document.parse_status = "completed"
         await db.flush()
         await db.refresh(document)
+
         return OutlineGenerateResponse(
             success=True,
             message="大纲生成成功",
-            data=params,
             document_id=document_id,
             project_id=project_id,
             duration_ms=result.get("duration_ms", 0),
         )
     except Exception as e:
+        document.parse_status = "failed"
+        await db.flush()
+        await db.refresh(document)
         raise e
 
 
 @router.post("/outline/generate-direct", response_model=OutlineGenerateResponse)
 async def generate_outline_direct(
-    data: OutlineGenerateDirectRequest,
+    data: OutlineGenerateRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """使用自定义prompt生成大纲"""
-    
+    if not data.outline_prompt:
+        raise ValueError("自定义系统prompt不能为空")
     project = await _get_project_or_create(data.project_id, db, "直接生成大纲")
     project_id = project.id
     # 每一次修改prompt，创建新文档记录
@@ -279,36 +357,37 @@ async def generate_outline_direct(
         file_type="",
         file_size_bytes=0,
         storage_path="",
-        parse_status="completed",
+        parse_status="generating",
     )
     db.add(document)
     await db.flush()
     await db.refresh(document)
     document_id = document.id
+    # 创建 Prompt
+    prompt = Prompt(
+        project_id=project_id,
+        document_id=document_id,
+        material_type=MaterialType.OUTLINE.value,
+        original_prompt="",
+        edited_prompt=data.outline_prompt,
+    )
+    db.add(prompt)
+    await db.flush()
+    await db.refresh(prompt)
     
     service = DeepseekService()
     
     try:
         # 使用自定义prompt作为system_prompt
-        result = await service.generate_outline_with_custom_prompt(
+        result = await service.generate_txt_from_prompt(
+            user_prompt="按要求生成大纲",
             system_prompt=data.outline_prompt,
+            material_type=MaterialType.OUTLINE,
         )
-        
-        # 解析大纲并创建Section记录
-        sections = result.get("sections", [])
-        for idx, section_data in enumerate(sections):
-            section = Section(
-                document_id=document_id,
-                title=section_data.get("title", f"Section {idx + 1}"),
-                level=section_data.get("level", 1),
-                content="",
-                page_start=None,
-                page_end=None,
-                order_index=idx,
-            )
-            db.add(section)
-        
-        await db.commit()
+        await _save_sections_to_db(result, document_id, db)
+        document.parse_status = "completed"
+        await db.flush()
+        await db.refresh(document)
         
         return OutlineGenerateResponse(
             success=True,
@@ -318,4 +397,7 @@ async def generate_outline_direct(
             duration_ms=result.get("duration_ms", 0),
         )
     except Exception as e:
+        document.parse_status = "failed"
+        await db.flush()
+        await db.refresh(document)
         raise e

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import ForeignKey, Integer, JSON, String, Text
+from app.schemas.document import MaterialType
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -68,6 +69,12 @@ class Prompt(Base, TimestampMixin):
     claude_model: Mapped[Optional[str]] = mapped_column(
         String(50),
         nullable=True,
+    )
+    material_type: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=MaterialType.OUTLINE.value,
+        comment="Material type: 1=outline, 2=references, 3=abstract, 4=acknowledgement, 5=section, 6=figure, 7=table, 8=formula, 9=code",
     )
     generation_status: Mapped[str] = mapped_column(
         String(20),

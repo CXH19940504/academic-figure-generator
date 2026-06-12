@@ -16,7 +16,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from app.models.document import Section
+
+from app.models.prompt import Prompt
 from app.schemas.document import MaterialType
 import httpx
 
@@ -73,8 +74,12 @@ class DeepseekService:
     async def generate_outline(
         self,
         params: dict[str, Any],
+        system_prompt: str | None = None,
         stream: bool = True,
         model: str = settings.DEEPSEEK_MODEL,
+        project_id: str = None,
+        document_id: str = None,
+        db = None,
     ) -> dict:
         """Call Deepseek via OpenAI-compatible API to generate outline.
 
@@ -96,16 +101,35 @@ class DeepseekService:
             Whether to use streaming API. Default is True for better latency.
         model:
             Deepseek model to use. Defaults to settings.DEEPSEEK_MODEL.
+        project_id:
+            Project ID for saving prompt.
+        document_id:
+            Document ID for saving prompt.
+        db:
+            Database session for saving prompt.
 
         Returns
         -------
         dict
-            ``{"outline": list[dict], "duration_ms": int}``
+            ``{"sections": list[dict], "duration_ms": int, "system_prompt": str}``
         """
-        system_prompt = self._get_skill_content(SystemPromptName.OUTLINE.value)
-        for key, value in params.items():
-            system_prompt = system_prompt.replace("{% " + key + " %}", str(value))
+        if not system_prompt:
+            system_prompt = self._get_skill_content(SystemPromptName.OUTLINE.value)
+            for key, value in params.items():
+                system_prompt = system_prompt.replace("{% " + key + " %}", str(value))
         user_prompt = "按要求生成大纲"
+
+        prompt = None
+        if db and project_id and document_id:
+            prompt = Prompt(
+                project_id=project_id,
+                document_id=document_id,
+                material_type=MaterialType.OUTLINE.value,
+                original_prompt=system_prompt,
+                generation_status="pending",
+            )
+            db.add(prompt)
+            await db.flush()
 
         start_time = time.monotonic()
 
@@ -123,6 +147,9 @@ class DeepseekService:
 
         duration_ms = int((time.monotonic() - start_time) * 1000)
         sections = self._parse_outline_response(result_text)
+        if prompt:
+            prompt.generation_status = "success"
+            await db.refresh(prompt)
 
         logger.info(
             "Deepseek API call completed in %d ms: %d outline items (stream=%s)",
@@ -134,58 +161,68 @@ class DeepseekService:
         return {
             "sections": sections,
             "duration_ms": duration_ms,
+            "system_prompt": system_prompt,
         }
 
-    async def generate_outline_with_custom_prompt(
+    async def generate_txt_from_prompt(
         self,
-        title: str,
-        subject: str = "",
-        paper_type: int = 1,
-        word_count: int = 15000,
-        system_prompt: str = "",
-        model: str = None,
+        user_prompt: str,
+        system_prompt: str,
+        material_type: MaterialType,
         stream: bool = True,
+        model: str = None,
     ) -> dict:
-        """Generate outline using custom system prompt."""
-        settings = get_settings()
+        """从已有的 prompt 生成文本。
+
+        Parameters
+        ----------
+        user_prompt:
+            User prompt for the API call.
+        system_prompt:
+            Pre-built system prompt.
+        stream:
+            Whether to use streaming API. Default is True.
+        model:
+            Deepseek model to use.
+
+        Returns
+        -------
+        dict
+            ``{"sections": list[dict], "duration_ms": int}``
+        """
         if model is None:
             model = settings.DEEPSEEK_MODEL
-        
-        user_prompt = self._build_outline_prompt(
-            title=title,
-            subject=subject,
-            paper_type=paper_type,
-            word_count=word_count,
-        )
-        
+
         start_time = time.monotonic()
-        
+
         try:
             if stream:
-                result_text = await self._call_deepseek_api_stream(user_prompt, model, system_prompt=system_prompt)
+                result_text = await self._call_deepseek_api_stream(user_prompt, model, system_prompt)
             else:
-                result_text = await self._call_deepseek_api(user_prompt, model, system_prompt=system_prompt)
+                result_text = await self._call_deepseek_api(user_prompt, model, system_prompt)
         except Exception as exc:
             duration_ms = int((time.monotonic() - start_time) * 1000)
             logger.error("Deepseek API error after %d ms: %s", duration_ms, exc)
-            raise ExternalAPIException(
-                "Deepseek", f"API error: {exc}"
-            ) from exc
-        
+            raise ExternalAPIException("Deepseek", f"API error: {exc}") from exc
+
         duration_ms = int((time.monotonic() - start_time) * 1000)
-        sections = self._parse_outline_response(result_text)
-        
-        logger.info(
-            "Deepseek API call completed in %d ms: %d outline items (stream=%s)",
-            duration_ms,
-            len(sections),
-            stream,
-        )
-        
-        return {
-            "sections": sections,
-            "duration_ms": duration_ms,
-        }
+        if material_type == MaterialType.OUTLINE:
+            sections = self._parse_outline_response(result_text)
+            logger.info(
+                "Deepseek API call completed in %d ms: %d outline items (stream=%s)",
+                duration_ms,
+                len(sections),
+                stream,
+            )
+            return {
+                "data": sections,
+                "duration_ms": duration_ms,
+            }
+        else:
+            return {
+                "data": result_text,
+                "duration_ms": duration_ms,
+            }
 
     async def _call_deepseek_api(self, user_prompt: str, model: str, system_prompt: str=None) -> str:
         """Call Deepseek OpenAI-compatible API (non-streaming)."""

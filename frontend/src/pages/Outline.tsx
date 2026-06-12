@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Textarea } from '../components/ui/textarea';
@@ -61,12 +61,9 @@ export function Outline() {
    const [subjectCode, setSubjectCode] = useState<string>('06');
    const [degree, setDegree] = useState<string>('本科');
    const [wordCount, setWordCount] = useState<number>(15000);
-   const [outlineLevel, setOutlineLevel] = useState<number>(3);
-   const [content, setContent] = useState('');
 
    // 自定义prompt状态
    const [outlinePrompt, setOutlinePrompt] = useState('');
-   const [isRefreshing, setIsRefreshing] = useState(false);
    const [templates, setTemplates] = useState<{ id: string; name: string }[]>([]);
    const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
    const [loadingTemplates, setLoadingTemplates] = useState(false);
@@ -76,6 +73,11 @@ export function Outline() {
    const [error, setError] = useState<string | null>(null);
    const [outlineResult, setOutlineResult] = useState<OutlineItem[] | null>(null);
    const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+   const [loadingDocuments, setLoadingDocuments] = useState(false);
+   const [documents, setDocuments] = useState<any[]>([]);
+
+   // 首次加载标志符
+   const firstLoadRef = useRef(true);
 
    // 获取直接生成大纲的项目ID
    const fetchProject = async () => {
@@ -96,8 +98,42 @@ export function Outline() {
       }
    };
 
+   // 获取项目文档列表
+   const fetchProjectDocuments = async (projectId: string) => {
+      setLoadingDocuments(true);
+      try {
+         const response = await api.get(`/projects/${projectId}/documents`);
+         const docs = response.data || [];
+         setDocuments(docs);
+         
+         // 如果有文档，获取第一个文档的 sections
+         if (docs.length > 0) {
+            const firstDoc = docs[0];
+            const docResponse = await api.get(`/documents/${firstDoc.id}`);
+            if (docResponse.data && docResponse.data.sections) {
+               setOutlineResult(docResponse.data.sections);
+            }
+         }
+      } catch (error) {
+         console.error('获取文档列表失败:', error);
+         setDocuments([]);
+      } finally {
+         setLoadingDocuments(false);
+      }
+   };
+
+   // 监听 projectId 变化
+   useEffect(() => {
+      if (projectId) {
+         fetchProjectDocuments(projectId);
+      }
+   }, [projectId]);
+
    // 加载模板列表
    useEffect(() => {
+      if (!firstLoadRef.current) return;
+      firstLoadRef.current = false;
+
       fetchProject();
 
       const loadTemplates = async () => {
@@ -130,7 +166,7 @@ export function Outline() {
          return;
       }
 
-      setIsRefreshing(true);
+      setIsGenerating(true);
       setOutlineResult(null);
       setError(null);
 
@@ -153,7 +189,7 @@ export function Outline() {
          const msg = getApiErrorMessage(e, '请求失败，请检查网络连接');
          setError(msg);
       } finally {
-         setIsRefreshing(false);
+         setIsGenerating(false);
       }
    };
 
@@ -177,23 +213,33 @@ export function Outline() {
       setError(null);
 
       try {
-         const response = await api.post('/outline/generate', {
-            project_id: null,  // 直接生成模式，不关联项目
+         // 第一步：创建 Prompt 并获取 system_prompt
+         const promptResponse = await api.post('/outline/prompt', {
+            project_id: null,
             title,
             paper_type: paperType,
             subject_code: subjectCode,
+            subject_name: '',
             degree,
             word_count: wordCount,
             template_id: selectedTemplate,
          });
 
+         const { prompt_id, system_prompt, project_id } = promptResponse.data;
+         
+         // 将 system_prompt 渲染到 outlinePrompt
+         setOutlinePrompt(system_prompt || '');
+         setProjectId(project_id);
+
+         // 第二步：使用 prompt_id 生成大纲
+         const generateResponse = await api.post(`/outline/${prompt_id}/generate`);
+
          // 根据返回的 document_id 获取大纲详情
-         if (response.data.document_id) {
-            const docResponse = await api.get(`/documents/${response.data.document_id}`);
+         if (generateResponse.data.document_id) {
+            const docResponse = await api.get(`/documents/${generateResponse.data.document_id}`);
             setOutlineResult(docResponse.data.sections || []);
-            setProjectId(response.data.project_id);
          } else {
-            setOutlineResult(response.data.sections || []);
+            setOutlineResult(generateResponse.data.sections || []);
          }
       } catch (e: any) {
          console.error(e);
@@ -435,8 +481,9 @@ export function Outline() {
                         onChange={e => setOutlinePrompt(e.target.value)}
                      />
                   </CardContent>
-                  <CardFooter className="border-t pt-4">
+                  <CardFooter className="border-t pt-4 space-y-3">
                      <Button
+                        id="generate-outline"
                         className="w-full"
                         size="lg"
                         onClick={handleGenerate}
@@ -449,13 +496,14 @@ export function Outline() {
                         )}
                      </Button>
                      <Button
+                        id="generate-direct"
                         className="w-full"
                         size="lg"
                         onClick={handleGenerateDirect}
-                        disabled={isRefreshing || !title.trim()}
+                        disabled={!title.trim() || !outlinePrompt.trim()}
                      >
-                        {isRefreshing ? (
-                           <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> 刷新中...</>
+                        {isGenerating ? (
+                           <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> 生成中...</>
                         ) : (
                            <><Wand2 className="w-4 h-4 mr-2" /> 直接修改后的prompt</>
                         )}
@@ -486,12 +534,16 @@ export function Outline() {
                      )}
                   </CardHeader>
                   <CardContent className="min-h-[400px] bg-muted/10 border-t">
-                     {isGenerating ? (
+                     {isGenerating || loadingDocuments ? (
                         <div className="flex items-center justify-center h-full">
                            <div className="text-center">
                               <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
-                              <p className="text-sm text-muted-foreground mt-4">AI 正在分析并生成大纲...</p>
-                              <p className="text-xs text-muted-foreground/60 mt-1">根据您提供的信息构建论文结构</p>
+                              <p className="text-sm text-muted-foreground mt-4">
+                                 {loadingDocuments ? '正在加载文档...' : 'AI 正在分析并生成大纲...'}
+                              </p>
+                              <p className="text-xs text-muted-foreground/60 mt-1">
+                                 {loadingDocuments ? '加载历史生成记录' : '根据您提供的信息构建论文结构'}
+                              </p>
                            </div>
                         </div>
                      ) : outlineResult && outlineResult.length > 0 ? (
