@@ -167,6 +167,27 @@ async def generate_prompts(
     return [_prompt_to_response(p) for p in prompts]
 
 
+@router.get("/documents/{document_id}/prompts", response_model=list[PromptResponse])
+async def list_document_prompts(
+    document_id: str,
+    material_type: int | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(Prompt).where(Prompt.document_id == document_id)
+    
+    if material_type is not None:
+        if material_type not in {m.value for m in MaterialType}:
+            raise BadRequestException(
+                f"Invalid material_type: {material_type}. "
+                f"Must be one of {[m.value for m in MaterialType]}"
+            )
+        query = query.where(Prompt.material_type == material_type)
+    
+    query = query.order_by(Prompt.created_at.desc())
+    result = await db.execute(query)
+    return [_prompt_to_response(p) for p in result.scalars().all()]
+
+
 @router.get("/projects/{project_id}/prompts", response_model=list[PromptResponse])
 async def list_project_prompts(
     project_id: str,

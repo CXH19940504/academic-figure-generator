@@ -55,32 +55,6 @@ export function Outline() {
    const [projectId, setProjectId] = useState<string | null>(null);
    const [loadingProject, setLoadingProject] = useState(true);
 
-   // 表单状态
-   const [title, setTitle] = useState('');
-   const [paperType, setPaperType] = useState<number>(1);
-   const [subjectCode, setSubjectCode] = useState<string>('06');
-   const [degree, setDegree] = useState<string>('本科');
-   const [wordCount, setWordCount] = useState<number>(15000);
-
-   // 自定义prompt状态
-   const [outlinePrompt, setOutlinePrompt] = useState('');
-   const [templates, setTemplates] = useState<{ id: string; name: string }[]>([]);
-   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
-   const [loadingTemplates, setLoadingTemplates] = useState(false);
-
-   // 结果状态
-   const [isGeneratingOutline, setIsGeneratingOutline] = useState(false);
-   const [isGeneratingDirect, setIsGeneratingDirect] = useState(false);
-   const isGenerating = isGeneratingOutline || isGeneratingDirect;
-   const [error, setError] = useState<string | null>(null);
-   const [outlineResult, setOutlineResult] = useState<OutlineItem[] | null>(null);
-   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
-   const [loadingDocuments, setLoadingDocuments] = useState(false);
-   const [documents, setDocuments] = useState<any[]>([]);
-
-   // 首次加载标志符
-   const firstLoadRef = useRef(true);
-
    // 获取直接生成大纲的项目ID
    const fetchProject = async () => {
       try {
@@ -100,34 +74,97 @@ export function Outline() {
       }
    };
 
-   // 获取项目文档列表
-   const fetchProjectDocuments = async (projectId: string) => {
+   // 表单状态
+   const [title, setTitle] = useState('');
+   const [paperType, setPaperType] = useState<number>(1);
+   const [subjectCode, setSubjectCode] = useState<string>('06');
+   const [degree, setDegree] = useState<string>('本科');
+   const [wordCount, setWordCount] = useState<number>(15000);
+
+   // 自定义prompt状态
+   const [outlinePrompt, setOutlinePrompt] = useState('');
+   const [templates, setTemplates] = useState<{ id: string; name: string }[]>([]);
+   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
+   const [loadingTemplates, setLoadingTemplates] = useState(false);
+
+   // 结果状态
+   const [isGenerating, setIsGenerating] = useState(false);
+   const [error, setError] = useState<string | null>(null);
+   const [outlineResult, setOutlineResult] = useState<OutlineItem[] | null>(null);
+   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+   const [loadingDocuments, setLoadingDocuments] = useState(false);
+   const [documentId, setDocumentId] = useState<string | null>(null);
+
+   // 首次加载标志符
+   const firstLoadRef = useRef(true);
+
+   // 获取项目文档
+   const fetchDocumentId = async (projectId: string) => {
       setLoadingDocuments(true);
       try {
          const response = await api.get(`/projects/${projectId}/documents`);
          const docs = response.data || [];
-         setDocuments(docs);
          
          // 如果有文档，获取第一个文档的 sections
          if (docs.length > 0) {
             const firstDoc = docs[0];
+            setDocumentId(firstDoc.id || null);
             const docResponse = await api.get(`/documents/${firstDoc.id}`);
-            if (docResponse.data && docResponse.data.sections) {
-               setOutlineResult(docResponse.data.sections);
-            }
+            if (docResponse.data) {
+               if (docResponse.data.title) {
+                  setTitle(docResponse.data.title);
+               }
+               if (docResponse.data.paper_type) {
+                  setPaperType(docResponse.data.paper_type);
+               }
+               if (docResponse.data.subject_code) {
+                  setSubjectCode(docResponse.data.subject_code);
+               }
+               if (docResponse.data.file_size_bytes) {
+                  setWordCount(docResponse.data.file_size_bytes);
+               }
+               if (docResponse.data.template_id) {
+                  setSelectedTemplate(docResponse.data.template_id);
+               }
+               if (docResponse.data.sections) {
+                  setOutlineResult(docResponse.data.sections);
+               }
+            } 
          }
       } catch (error) {
          console.error('获取文档列表失败:', error);
-         setDocuments([]);
+         setDocumentId(null);
       } finally {
          setLoadingDocuments(false);
+         if (documentId) {
+            fetchDocumentPrompts(documentId);
+         }
+      }
+   };
+
+   // 获取文档的 prompts
+   const fetchDocumentPrompts = async (documentId: string) => {
+      try {
+         const response = await api.get(`/documents/${documentId}/prompts`, {
+            params: {
+               material_type: 1,
+            },
+         });
+         const prompts = response.data || [];
+         if (prompts.length > 0) {
+            const latestPrompt = prompts[0];
+            const promptContent = latestPrompt.edited_prompt || latestPrompt.original_prompt || '';
+            setOutlinePrompt(promptContent);
+         }
+      } catch (error) {
+         console.error('获取文档 prompts 失败:', error);
       }
    };
 
    // 监听 projectId 变化
    useEffect(() => {
       if (projectId) {
-         fetchProjectDocuments(projectId);
+         fetchDocumentId(projectId);
       }
    }, [projectId]);
 
@@ -168,7 +205,7 @@ export function Outline() {
          return;
       }
 
-      setIsGeneratingDirect(true);
+      setIsGenerating(true);
       setOutlineResult(null);
       setError(null);
 
@@ -182,7 +219,7 @@ export function Outline() {
          if (response.data.document_id) {
             const docResponse = await api.get(`/documents/${response.data.document_id}`);
             setOutlineResult(docResponse.data.sections || []);
-            setProjectId(response.data.project_id);
+            setDocumentId(response.data.document_id);
          } else {
             setOutlineResult(response.data.sections || []);
          }
@@ -191,7 +228,7 @@ export function Outline() {
          const msg = getApiErrorMessage(e, '请求失败，请检查网络连接');
          setError(msg);
       } finally {
-         setIsGeneratingDirect(false);
+         setIsGenerating(false);
       }
    };
 
@@ -210,7 +247,7 @@ export function Outline() {
          return;
       }
 
-      setIsGeneratingOutline(true);
+      setIsGenerating(true);
       setOutlineResult(null);
       setError(null);
 
@@ -221,17 +258,16 @@ export function Outline() {
             title,
             paper_type: paperType,
             subject_code: subjectCode,
-            subject_name: '',
             degree,
             word_count: wordCount,
             template_id: selectedTemplate,
          });
 
-         const { prompt_id, system_prompt, project_id } = promptResponse.data;
+         const { prompt_id, system_prompt, document_id } = promptResponse.data;
          
          // 将 system_prompt 渲染到 outlinePrompt
+         setDocumentId(document_id);
          setOutlinePrompt(system_prompt || '');
-         setProjectId(project_id);
 
          // 第二步：使用 prompt_id 生成大纲
          const generateResponse = await api.post(`/outline/${prompt_id}/generate`);
@@ -248,7 +284,7 @@ export function Outline() {
          const msg = getApiErrorMessage(e, '请求失败，请检查网络连接');
          setError(msg);
       } finally {
-         setIsGeneratingOutline(false);
+         setIsGenerating(false);
       }
    };
 
@@ -483,14 +519,15 @@ export function Outline() {
                         onChange={e => setOutlinePrompt(e.target.value)}
                      />
                   </CardContent>
-                  <CardFooter className="border-t pt-4 flex gap-2">
+                  <CardFooter className="border-t pt-4 space-y-3">
                      <Button
                         id="generate-outline"
-                        className="flex-1"
+                        className="w-full"
+                        size="lg"
                         onClick={handleGenerate}
                         disabled={isGenerating || !title.trim()}
                      >
-                        {isGeneratingOutline ? (
+                        {isGenerating ? (
                            <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> 生成中...</>
                         ) : (
                            <><Wand2 className="w-4 h-4 mr-2" /> 生成大纲</>
@@ -498,15 +535,15 @@ export function Outline() {
                      </Button>
                      <Button
                         id="generate-direct"
-                        variant="outline"
-                        size="sm"
+                        className="w-full"
+                        size="lg"
                         onClick={handleGenerateDirect}
-                        disabled={isGenerating || !title.trim() || !outlinePrompt.trim()}
+                        disabled={!title.trim() || !outlinePrompt.trim()}
                      >
-                        {isGeneratingDirect ? (
-                           <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> 生成中...</>
+                        {isGenerating ? (
+                           <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> 生成中...</>
                         ) : (
-                           <><Wand2 className="w-4 h-4 mr-1" /> 使用当前Prompt生成</>
+                           <><Wand2 className="w-4 h-4 mr-2" /> 直接修改后的prompt</>
                         )}
                      </Button>
                   </CardFooter>
@@ -593,7 +630,7 @@ export function Outline() {
                      <CardFooter className="bg-muted/30 pt-4 border-t">
                         <div className="flex items-center justify-between w-full text-sm text-muted-foreground">
                            <span>共 {outlineResult.length} 个条目</span>
-                           <span>支持 {outlineResult ? Math.max(...outlineResult.map(i => i.level)) : 0} 级大纲</span>
+                           <span>支持 {outlineLevel} 级大纲</span>
                         </div>
                      </CardFooter>
                   )}

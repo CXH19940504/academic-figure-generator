@@ -11,6 +11,7 @@ from app.core.exceptions import NotFoundException
 from app.dependencies import get_db
 from app.models.document import Document, Section
 from app.models.prompt import Prompt
+from app.schemas import get_subject_name_by_code
 from app.schemas.document import MaterialType, PaperType
 from app.models.project import Project, Template
 from app.schemas.document import (
@@ -241,9 +242,10 @@ async def create_outline_prompt(
     await db.refresh(document)
     document_id = document.id
 
+
     # 构建 system prompt
     params = dict(
-        major_name=data.subject_name,
+        major_name=get_subject_name_by_code(data.subject_code),
         paper_title=data.title,
         word_count=data.word_count,
         paper_type=(data.degree or "") + " " + PaperType.get_name(data.paper_type),

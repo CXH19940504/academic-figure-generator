@@ -167,7 +167,6 @@ class OutlinePromptCreateRequest(BaseModel):
     title: str = Field(..., min_length=10, max_length=500, description="论文标题")
     paper_type: int = Field(default=1, ge=1, le=4, description="论文类型：1=毕业论文, 2=期刊论文, 3=实习报告, 4=调查报告")
     subject_code: str = Field(default="08", description="学科代码（参考教育部学科分类）")
-    subject_name: str = Field(default="", description="学科名称（参考教育部学科分类）")
     degree: str = Field(default="本科", description="学历层次：大专/本科/硕士/博士/MBA")
     word_count: int = Field(default=15000, ge=5000, le=100000, description="目标字数")
     template_id: str | None = Field(default=None, description="排版模板ID")

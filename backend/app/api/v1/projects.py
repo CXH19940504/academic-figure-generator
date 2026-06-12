@@ -107,6 +107,14 @@ async def get_project_by_name(
     db: AsyncSession = Depends(get_db),
 ):
     project = await _get_project_by_name(name, db)
+    if project is None:
+        project = Project(
+            name=name,
+            description=f"直接创建的{name}",
+        )
+        db.add(project)
+        await db.flush()
+        await db.refresh(project)
     return ProjectResponse.model_validate(project)
 
 
