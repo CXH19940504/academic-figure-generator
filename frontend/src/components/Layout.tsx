@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Palette, Settings, Zap, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Palette, Settings, Zap, Menu, X, List } from 'lucide-react';
 
 export function Layout() {
     const location = useLocation();
@@ -8,9 +8,10 @@ export function Layout() {
 
     const navItems = [
         { name: '论文列表', path: '/projects', icon: LayoutDashboard },
+        { name: '大纲生成', path: '/outline', icon: List },
+        { name: '配图生成', path: '/generate', icon: Zap },
         { name: '配色管理', path: '/color-schemes', icon: Palette },
         { name: '设置', path: '/settings', icon: Settings },
-        { name: '配图生成', path: '/generate', icon: Zap },
     ];
 
     const SidebarContent = () => (

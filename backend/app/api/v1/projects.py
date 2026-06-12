@@ -31,6 +31,14 @@ async def _get_project(project_id: str, db: AsyncSession) -> Project:
     return project
 
 
+async def _get_project_by_name(name: str, db: AsyncSession) -> Project:
+    result = await db.execute(select(Project).where(Project.name == name))
+    project: Project | None = result.scalar_one_or_none()
+    if project is None or project.status == "deleted":
+        raise NotFoundException("Project not found")
+    return project
+
+
 async def _enrich_response(project: Project, db: AsyncSession) -> ProjectResponse:
     doc_count = (
         await db.execute(
@@ -47,60 +55,40 @@ async def _enrich_response(project: Project, db: AsyncSession) -> ProjectRespons
             select(func.count()).select_from(Image).where(Image.project_id == project.id)
         )
     ).scalar_one()
-
     return ProjectResponse(
         id=project.id,
         name=project.name,
         description=project.description,
         paper_field=project.paper_field,
-        color_scheme=project.color_scheme,
-        custom_colors=project.custom_colors,
         status=project.status,
-        created_at=project.created_at,
-        updated_at=project.updated_at,
         document_count=doc_count,
         prompt_count=prompt_count,
         image_count=image_count,
+        created_at=project.created_at,
+        updated_at=project.updated_at,
     )
 
 
-@router.post("/", response_model=ProjectResponse, status_code=201)
+@router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 async def create_project(
     data: ProjectCreate,
     db: AsyncSession = Depends(get_db),
 ):
-    project = Project(
-        name=data.name,
-        description=data.description,
-        paper_field=data.paper_field,
-        color_scheme=data.color_scheme,
-        custom_colors=data.custom_colors,
-    )
+    project = Project(name=data.name, description=data.description, paper_field=data.paper_field)
     db.add(project)
-    await db.flush()
+    await db.commit()
     await db.refresh(project)
     return await _enrich_response(project, db)
 
 
-@router.get("/", response_model=ProjectListResponse)
+@router.get("", response_model=ProjectListResponse)
 async def list_projects(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    status: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    base_query = select(Project).where(Project.status != "deleted")
-    if status is not None:
-        base_query = base_query.where(Project.status == status)
-
-    total: int = (await db.execute(select(func.count()).select_from(base_query.subquery()))).scalar_one()
-    offset = (page - 1) * page_size
-    rows = (
-        await db.execute(base_query.order_by(Project.created_at.desc()).offset(offset).limit(page_size))
-    ).scalars().all()
-
-    items = [await _enrich_response(p, db) for p in rows]
-    return ProjectListResponse(items=items, total=total, page=page, page_size=page_size)
+    result = await db.execute(select(Project).where(Project.status != "deleted").order_by(Project.created_at.desc()))
+    projects = result.scalars().all()
+    enriched = [await _enrich_response(p, db) for p in projects]
+    return ProjectListResponse(projects=enriched)
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
@@ -110,6 +98,15 @@ async def get_project(
 ):
     project = await _get_project(project_id, db)
     return await _enrich_response(project, db)
+
+
+@router.get("/by_name", response_model=ProjectResponse)
+async def get_project_by_name(
+    name: str = Query(..., description='Project name'),
+    db: AsyncSession = Depends(get_db),
+):
+    project = await _get_project_by_name(name, db)
+    return ProjectResponse.model_validate(project)
 
 
 @router.put("/{project_id}", response_model=ProjectResponse)
@@ -125,15 +122,7 @@ async def update_project(
         project.description = data.description
     if data.paper_field is not None:
         project.paper_field = data.paper_field
-    if data.color_scheme is not None:
-        project.color_scheme = data.color_scheme
-    if data.custom_colors is not None:
-        project.custom_colors = data.custom_colors
-    if data.status is not None:
-        project.status = data.status
-
-    db.add(project)
-    await db.flush()
+    await db.commit()
     await db.refresh(project)
     return await _enrich_response(project, db)
 
@@ -145,148 +134,51 @@ async def delete_project(
 ):
     project = await _get_project(project_id, db)
     project.status = "deleted"
-    db.add(project)
-    await db.flush()
-    return MessageResponse(message="Project deleted")
-
-
-# -----------------------------------------------------------------------------
-# Template endpoints
-# -----------------------------------------------------------------------------
-
-
-@router.post(
-    "/{project_id}/template",
-    response_model=TemplateResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def upload_template(
-    project_id: str,
-    file: UploadFile = File(...),
-    name: str = Query(..., description="Template name"),
-    db: AsyncSession = Depends(get_db),
-):
-    """Upload a DOCX template file and save its content to the database.
-
-    The DOCX file is parsed and the text content is stored in the Template.content field.
-    The original file is also saved to local storage.
-
-    Args:
-        project_id: The project ID to associate with the template.
-        file: The DOCX file to upload.
-        name: The template name.
-        db: Database session.
-
-    Returns:
-        The created Template object.
-    """
-    # Verify project exists
-    await _get_project(project_id, db)
-
-    # Validate file type
-    if not file.filename or not file.filename.lower().endswith(".docx"):
-        raise ValueError("Only DOCX files are supported for templates")
-
-    # Read file content
-    contents = await file.read()
-    original_filename = file.filename
-
-    # Save to local storage
-    storage = LocalStorageService()
-    storage_path = storage.save_upload(f"{project_id}/templates/{original_filename}", contents)
-
-    # Parse DOCX content
-    from app.services.document_service import DocumentService  # noqa: PLC0415
-
-    doc_service = DocumentService()
-    try:
-        parse_result = doc_service.parse(contents, "docx")
-        content = parse_result.get("full_text", "")
-    except Exception as e:
-        # If parsing fails, store empty content but still save the file
-        content = ""
-        raise ValueError(f"Failed to parse DOCX file: {e}")
-
-    # Create template record
-    template = Template(
-        project_id=project_id,
-        name=name,
-        content=content,
-        storage_path=storage_path,
-    )
-    db.add(template)
-    await db.flush()
-    await db.refresh(template)
-
-    return TemplateResponse(
-        id=template.id,
-        project_id=template.project_id,
-        name=template.name,
-        content=template.content,
-        storage_path=template.storage_path,
-        created_at=template.created_at,
-    )
+    await db.commit()
+    return MessageResponse(message="Project deleted successfully")
 
 
 @router.get("/{project_id}/templates", response_model=list[TemplateResponse])
-async def list_templates(
+async def list_project_templates(
     project_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """List all templates for a project.
-
-    Args:
-        project_id: The project ID.
-        db: Database session.
-
-    Returns:
-        List of Template objects.
-    """
-    # Verify project exists
     await _get_project(project_id, db)
-
     result = await db.execute(select(Template).where(Template.project_id == project_id))
     templates = result.scalars().all()
-
-    return [
-        TemplateResponse(
-            id=t.id,
-            project_id=project_id,
-            name=t.name,
-            content=t.content,
-            storage_path=t.storage_path,
-            created_at=t.created_at,
-        )
-        for t in templates
-    ]
+    return [TemplateResponse.model_validate(t) for t in templates]
 
 
-@router.delete("/{project_id}/template/{template_id}", response_model=MessageResponse)
-async def delete_template(
+@router.post("/{project_id}/templates", response_model=TemplateResponse, status_code=status.HTTP_201_CREATED)
+async def create_project_template(
     project_id: str,
-    template_id: str,
+    name: str = Query(..., description="Template name"),
+    file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a template.
-
-    Args:
-        project_id: The project ID.
-        template_id: The template ID.
-        db: Database session.
-
-    Returns:
-        Success message.
-    """
-    # Verify project exists
     await _get_project(project_id, db)
+    storage_service = LocalStorageService()
+    storage_path = await storage_service.save_uploaded_file(file, "templates")
+    template = Template(name=name, project_id=project_id, storage_path=storage_path)
+    db.add(template)
+    await db.commit()
+    await db.refresh(template)
+    return TemplateResponse.model_validate(template)
 
-    result = await db.execute(select(Template).where(Template.id == template_id))
-    template = result.scalar_one_or_none()
 
+@router.delete("/{project_id}/templates/{template_id}", response_model=MessageResponse)
+async def delete_project_template(
+    project_id: str,
+    template_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_project(project_id, db)
+    result = await db.execute(select(Template).where(Template.id == template_id, Template.project_id == project_id))
+    template: Template | None = result.scalar_one_or_none()
     if template is None:
         raise NotFoundException("Template not found")
-
+    storage_service = LocalStorageService()
+    await storage_service.delete_file(template.storage_path)
     await db.delete(template)
-    await db.flush()
-
-    return MessageResponse(message="Template deleted")
+    await db.commit()
+    return MessageResponse(message="Template deleted successfully")

@@ -16,6 +16,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from backend.app.models.document import Section
+from backend.app.schemas.document import MaterialType
 import httpx
 
 from app.config import get_settings
@@ -72,7 +74,7 @@ class DeepseekService:
         self,
         params: dict[str, Any],
         stream: bool = True,
-        model: str = None,
+        model: str = settings.DEEPSEEK_MODEL,
     ) -> dict:
         """Call Deepseek via OpenAI-compatible API to generate outline.
 
@@ -100,10 +102,6 @@ class DeepseekService:
         dict
             ``{"outline": list[dict], "duration_ms": int}``
         """
-        # Use settings default if model not specified
-        if model is None:
-            model = settings.DEEPSEEK_MODEL
-
         system_prompt = self._get_skill_content(SystemPromptName.OUTLINE.value)
         for key, value in params.items():
             system_prompt = system_prompt.replace("{% " + key + " %}", str(value))
@@ -124,17 +122,68 @@ class DeepseekService:
             ) from exc
 
         duration_ms = int((time.monotonic() - start_time) * 1000)
-        outlines = self._parse_outline_response(result_text)
+        sections = self._parse_outline_response(result_text)
 
         logger.info(
             "Deepseek API call completed in %d ms: %d outline items (stream=%s)",
             duration_ms,
-            len(outlines),
+            len(sections),
             stream,
         )
 
         return {
-            "outline": outlines,
+            "sections": sections,
+            "duration_ms": duration_ms,
+        }
+
+    async def generate_outline_with_custom_prompt(
+        self,
+        title: str,
+        subject: str = "",
+        paper_type: int = 1,
+        word_count: int = 15000,
+        system_prompt: str = "",
+        model: str = None,
+        stream: bool = True,
+    ) -> dict:
+        """Generate outline using custom system prompt."""
+        settings = get_settings()
+        if model is None:
+            model = settings.DEEPSEEK_MODEL
+        
+        user_prompt = self._build_outline_prompt(
+            title=title,
+            subject=subject,
+            paper_type=paper_type,
+            word_count=word_count,
+        )
+        
+        start_time = time.monotonic()
+        
+        try:
+            if stream:
+                result_text = await self._call_deepseek_api_stream(user_prompt, model, system_prompt=system_prompt)
+            else:
+                result_text = await self._call_deepseek_api(user_prompt, model, system_prompt=system_prompt)
+        except Exception as exc:
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            logger.error("Deepseek API error after %d ms: %s", duration_ms, exc)
+            raise ExternalAPIException(
+                "Deepseek", f"API error: {exc}"
+            ) from exc
+        
+        duration_ms = int((time.monotonic() - start_time) * 1000)
+        sections = self._parse_outline_response(result_text)
+        
+        logger.info(
+            "Deepseek API call completed in %d ms: %d outline items (stream=%s)",
+            duration_ms,
+            len(sections),
+            stream,
+        )
+        
+        return {
+            "sections": sections,
             "duration_ms": duration_ms,
         }
 
@@ -286,7 +335,7 @@ class DeepseekService:
             re.DOTALL
         )
 
-        outlines: list[dict] = []
+        outline: list[dict] = []
         order = 0
 
         for match in heading_pattern.finditer(cleaned):
@@ -298,38 +347,40 @@ class DeepseekService:
                 continue
 
             order += 1
-            outlines.append({
+            outline.append({
                 "level": level,
                 "title": title,
                 "order": order,
             })
 
-        if not outlines:
+        if not outline:
             logger.warning("Could not parse outline from Deepseek response: no heading tags found")
             return []
-
-        logger.info("Parsed %d outline items from Deepseek response", len(outlines))
-        return outlines
+        sections = self._validate_outline(outline)
+        logger.info("Parsed %d outline items from Deepseek response", len(sections))
+        return sections
 
     @staticmethod
-    def _validate_outline(outlines: list) -> list[dict]:
+    def _validate_outline(outline: list) -> list[dict]:
         """Validate and normalize the list of outline dicts."""
         valid: list[dict] = []
-        for i, outline in enumerate(outlines):
-            if not isinstance(outline, dict):
+        for i, section in enumerate(outline):
+            if not isinstance(section, dict):
                 logger.warning("Skipping non-dict outline at index %d", i)
                 continue
 
             validated: dict[str, Any] = {
-                "level": outline.get("level", 1),
-                "title": outline.get("title", f"Section {i + 1}"),
-                "order": outline.get("order", i + 1),
+                "level": section.get("level", 1),
+                "title": section.get("title", f"Section {i + 1}"),
+                "order": section.get("order", i + 1),
             }
-
             if not validated["title"]:
-                logger.warning("Skipping outline %d: empty title", validated["order"])
+                logger.warning("Skipping section %d: empty title", validated["order"])
                 continue
 
+            if validated["level"] == 1:
+                validated["material_type"] = MaterialType.get_value_by_name(validated["title"])
+                
             valid.append(validated)
 
         return valid

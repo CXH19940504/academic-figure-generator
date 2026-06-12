@@ -28,7 +28,7 @@ class ProjectResponse(BaseModel):
     name: str
     description: str | None
     paper_field: str | None
-    color_scheme: str
+    color_scheme: str | None
     custom_colors: dict | None
     status: str
     created_at: datetime
@@ -52,13 +52,5 @@ class TemplateResponse(BaseModel):
     id: str
     project_id: Optional[str] = None
     name: str
-    content: str | None = None
     storage_path: str | None = None
     created_at: datetime
-
-
-class TemplateCreate(BaseModel):
-    """Template creation schema for API requests."""
-    name: str
-    content: str | None = None
-    storage_path: str | None = None

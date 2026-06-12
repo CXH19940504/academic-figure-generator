@@ -27,6 +27,11 @@ class Section(Base, TimestampMixin):
         ForeignKey("documents.id", ondelete="CASCADE"),
         nullable=False,
     )
+    material_type: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+    )
     title: Mapped[str] = mapped_column(
         String(500),
         nullable=False,

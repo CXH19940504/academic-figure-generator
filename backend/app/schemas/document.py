@@ -42,6 +42,34 @@ class MaterialType(IntEnum):
     ABSTRACT = 3  # 中英文摘要
     ACKNOWLEDGEMENT = 4  # 致谢模板
 
+    @classmethod
+    def get_value_by_name(cls, name: str) -> int:
+        """根据名称获取枚举值
+
+        支持两种方式：
+        1. 英文名称（如 'REFERENCES', 'OUTLINE'）
+        2. 中文名称（如 '参考文献', '摘要'）
+        """
+        name = name.strip()
+        if not name:
+            return 1
+
+        # 尝试英文名称（枚举成员名）
+        try:
+            return cls[name.upper()].value
+        except KeyError:
+            pass
+
+        # 中文名称映射
+        names = {
+            "引言": 1,
+            "结论": 1,
+            "参考文献": 2,
+            "摘要": 3,
+            "致谢": 4
+        }
+        return names.get(name, 1)
+
 
 class PaperMaterials(BaseModel):
     """论文材料清单"""
@@ -105,3 +133,29 @@ class DocumentCreate(BaseModel):
     paper_type: int  # 论文类型
     subject_code: str  # 学科代码
     template_id: Optional[int] = None  # 排版模板ID
+
+
+class OutlineGenerateRequest(BaseModel):
+    project_id: str | None = Field(default=None, description="项目ID，用于关联项目模板。")
+    title: str = Field(..., min_length=10, max_length=500, description="论文标题")
+    paper_type: int = Field(default=1, ge=1, le=4, description="论文类型：1=毕业论文, 2=期刊论文, 3=实习报告, 4=调查报告")
+    subject_code: str = Field(default="08", description="学科代码（参考教育部学科分类）")
+    subject_name: str = Field(default="", description="学科名称（参考教育部学科分类）")
+    degree: str = Field(default="本科", description="学历层次：大专/本科/硕士/博士/MBA")
+    word_count: int = Field(default=15000, ge=5000, le=100000, description="目标字数")
+    template_id: int | None = Field(default=None, description="排版模板ID")
+
+
+class OutlineGenerateDirectRequest(BaseModel):
+    project_id: str | None = Field(default=None, description="项目ID，用于关联项目模板。")
+    title: str = Field(..., min_length=10, max_length=500, description="论文标题")
+    outline_prompt: str = Field(..., description="自定义系统prompt")
+
+
+class OutlineGenerateResponse(BaseModel):
+    success: bool = True
+    message: str = "大纲生成成功"
+    data: dict | None = None
+    document_id: str = ""
+    project_id: str | None = None
+    duration_ms: int

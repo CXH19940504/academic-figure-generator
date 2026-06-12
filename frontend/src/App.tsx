@@ -5,6 +5,7 @@ import { ProjectWorkspace } from "./pages/ProjectWorkspace";
 import { ColorSchemes } from "./pages/ColorSchemes";
 import { Settings } from "./pages/Settings";
 import { Generate } from "./pages/Generate";
+import { Outline } from "./pages/Outline";
 
 function App() {
   return (
@@ -17,6 +18,7 @@ function App() {
           <Route path="/color-schemes" element={<ColorSchemes />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/generate" element={<Generate />} />
+          <Route path="/outline" element={<Outline />} />
         </Route>
       </Routes>
     </Router>
