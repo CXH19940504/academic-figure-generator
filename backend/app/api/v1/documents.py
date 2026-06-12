@@ -255,6 +255,8 @@ async def create_outline_prompt(
     prompt = Prompt(
         project_id=project_id,
         document_id=document_id,
+        figure_number=0,
+        title=data.title,
         material_type=MaterialType.OUTLINE.value,
         original_prompt=system_prompt,
         edited_prompt=system_prompt,
@@ -367,6 +369,8 @@ async def generate_outline_direct(
     prompt = Prompt(
         project_id=project_id,
         document_id=document_id,
+        figure_number=0,
+        title=data.title,
         material_type=MaterialType.OUTLINE.value,
         original_prompt="",
         edited_prompt=data.outline_prompt,

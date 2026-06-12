@@ -3,7 +3,7 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -15,6 +15,7 @@ from app.dependencies import get_db
 from app.models.document import Document
 from app.models.project import Project
 from app.models.prompt import Prompt
+from app.schemas.document import MaterialType
 from app.schemas.prompt import (
     PromptGenerateRequest,
     PromptResponse,
@@ -169,12 +170,21 @@ async def generate_prompts(
 @router.get("/projects/{project_id}/prompts", response_model=list[PromptResponse])
 async def list_project_prompts(
     project_id: str,
+    material_type: int | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
+    if material_type is None:
+        material_type = MaterialType.FIGURE.value
+    elif material_type not in {m.value for m in MaterialType}:
+        raise BadRequestException(
+            f"Invalid material_type: {material_type}. "
+            f"Must be one of {[m.value for m in MaterialType]}"
+        )
+
     await _get_project(project_id, db)
     result = await db.execute(
         select(Prompt)
-        .where(Prompt.project_id == project_id)
+        .where(Prompt.project_id == project_id, Prompt.material_type == material_type)
         .order_by(Prompt.figure_number.asc())
     )
     return [_prompt_to_response(p) for p in result.scalars().all()]

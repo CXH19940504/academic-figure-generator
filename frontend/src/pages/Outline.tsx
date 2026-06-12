@@ -69,7 +69,9 @@ export function Outline() {
    const [loadingTemplates, setLoadingTemplates] = useState(false);
 
    // 结果状态
-   const [isGenerating, setIsGenerating] = useState(false);
+   const [isGeneratingOutline, setIsGeneratingOutline] = useState(false);
+   const [isGeneratingDirect, setIsGeneratingDirect] = useState(false);
+   const isGenerating = isGeneratingOutline || isGeneratingDirect;
    const [error, setError] = useState<string | null>(null);
    const [outlineResult, setOutlineResult] = useState<OutlineItem[] | null>(null);
    const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
@@ -166,7 +168,7 @@ export function Outline() {
          return;
       }
 
-      setIsGenerating(true);
+      setIsGeneratingDirect(true);
       setOutlineResult(null);
       setError(null);
 
@@ -189,7 +191,7 @@ export function Outline() {
          const msg = getApiErrorMessage(e, '请求失败，请检查网络连接');
          setError(msg);
       } finally {
-         setIsGenerating(false);
+         setIsGeneratingDirect(false);
       }
    };
 
@@ -208,7 +210,7 @@ export function Outline() {
          return;
       }
 
-      setIsGenerating(true);
+      setIsGeneratingOutline(true);
       setOutlineResult(null);
       setError(null);
 
@@ -246,7 +248,7 @@ export function Outline() {
          const msg = getApiErrorMessage(e, '请求失败，请检查网络连接');
          setError(msg);
       } finally {
-         setIsGenerating(false);
+         setIsGeneratingOutline(false);
       }
    };
 
@@ -481,15 +483,14 @@ export function Outline() {
                         onChange={e => setOutlinePrompt(e.target.value)}
                      />
                   </CardContent>
-                  <CardFooter className="border-t pt-4 space-y-3">
+                  <CardFooter className="border-t pt-4 flex gap-2">
                      <Button
                         id="generate-outline"
-                        className="w-full"
-                        size="lg"
+                        className="flex-1"
                         onClick={handleGenerate}
                         disabled={isGenerating || !title.trim()}
                      >
-                        {isGenerating ? (
+                        {isGeneratingOutline ? (
                            <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> 生成中...</>
                         ) : (
                            <><Wand2 className="w-4 h-4 mr-2" /> 生成大纲</>
@@ -497,15 +498,15 @@ export function Outline() {
                      </Button>
                      <Button
                         id="generate-direct"
-                        className="w-full"
-                        size="lg"
+                        variant="outline"
+                        size="sm"
                         onClick={handleGenerateDirect}
-                        disabled={!title.trim() || !outlinePrompt.trim()}
+                        disabled={isGenerating || !title.trim() || !outlinePrompt.trim()}
                      >
-                        {isGenerating ? (
-                           <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> 生成中...</>
+                        {isGeneratingDirect ? (
+                           <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> 生成中...</>
                         ) : (
-                           <><Wand2 className="w-4 h-4 mr-2" /> 直接修改后的prompt</>
+                           <><Wand2 className="w-4 h-4 mr-1" /> 使用当前Prompt生成</>
                         )}
                      </Button>
                   </CardFooter>
@@ -592,7 +593,7 @@ export function Outline() {
                      <CardFooter className="bg-muted/30 pt-4 border-t">
                         <div className="flex items-center justify-between w-full text-sm text-muted-foreground">
                            <span>共 {outlineResult.length} 个条目</span>
-                           <span>支持 {outlineLevel} 级大纲</span>
+                           <span>支持 {outlineResult ? Math.max(...outlineResult.map(i => i.level)) : 0} 级大纲</span>
                         </div>
                      </CardFooter>
                   )}
