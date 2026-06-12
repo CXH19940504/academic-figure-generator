@@ -183,7 +183,6 @@ async def list_document_prompts(
             )
         query = query.where(Prompt.material_type == material_type)
     
-    query = query.order_by(Prompt.created_at.desc())
     result = await db.execute(query)
     return [_prompt_to_response(p) for p in result.scalars().all()]
 

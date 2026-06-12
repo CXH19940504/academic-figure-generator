@@ -130,15 +130,16 @@ export function Outline() {
                   setOutlineResult(docResponse.data.sections);
                }
             } 
+            // 使用局部变量 firstDoc.id 而不是状态值
+            if (firstDoc.id) {
+               fetchDocumentPrompts(firstDoc.id);
+            }
          }
       } catch (error) {
          console.error('获取文档列表失败:', error);
          setDocumentId(null);
       } finally {
          setLoadingDocuments(false);
-         if (documentId) {
-            fetchDocumentPrompts(documentId);
-         }
       }
    };
 
