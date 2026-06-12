@@ -526,31 +526,32 @@ export function Outline() {
                         onChange={e => setOutlinePrompt(e.target.value)}
                      />
                   </CardContent>
-                  <CardFooter className="border-t pt-4 space-y-3">
+                  <CardFooter className="border-t pt-4 flex gap-2">
                      <Button
                         id="generate-outline"
-                        className="w-full"
-                        size="lg"
+                        className="flex-1"
+                        size="sm"
                         onClick={handleGenerate}
                         disabled={isGenerating || !title.trim()}
                      >
                         {isGenerating ? (
-                           <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> 生成中...</>
+                           <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> 生成中...</>
                         ) : (
-                           <><Wand2 className="w-4 h-4 mr-2" /> 生成大纲</>
+                           <><Wand2 className="w-4 h-4 mr-1" /> 生成大纲</>
                         )}
                      </Button>
                      <Button
                         id="generate-direct"
-                        className="w-full"
-                        size="lg"
+                        variant="outline"
+                        className="flex-1"
+                        size="sm"
                         onClick={handleGenerateDirect}
                         disabled={!title.trim() || !outlinePrompt.trim()}
                      >
                         {isGenerating ? (
-                           <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> 生成中...</>
+                           <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> 生成中...</>
                         ) : (
-                           <><Wand2 className="w-4 h-4 mr-2" /> 直接修改后的prompt</>
+                           <><Wand2 className="w-4 h-4 mr-1" /> 直接修改后的prompt</>
                         )}
                      </Button>
                   </CardFooter>
@@ -637,7 +638,7 @@ export function Outline() {
                      <CardFooter className="bg-muted/30 pt-4 border-t">
                         <div className="flex items-center justify-between w-full text-sm text-muted-foreground">
                            <span>共 {outlineResult.length} 个条目</span>
-                           <span>支持 {outlineLevel} 级大纲</span>
+                           <span>支持 {Math.max(...outlineResult.map(item => item.level))} 级大纲</span>
                         </div>
                      </CardFooter>
                   )}
@@ -647,3 +648,4 @@ export function Outline() {
       </div>
    );
 }
+

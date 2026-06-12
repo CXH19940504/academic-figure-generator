@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.exceptions import NotFoundException
+from app.core.exceptions import BadRequestException, NotFoundException
 from app.dependencies import get_db
 from app.models.document import Document, Section
 from app.models.prompt import Prompt
@@ -195,20 +195,29 @@ def _build_outline_system_prompt(params: dict) -> str:
 
 async def _save_sections_to_db(result: dict, document_id: str, db: AsyncSession) -> int:
     """将大纲数据保存到数据库"""
-    sections = result.get("sections", [])
+    logger = logging.getLogger(__name__)
+    logger.info("_save_sections_to_db called, result keys: %s, document_id: %s", list(result.keys()), document_id)
+
+    sections = result.get("data", [])
+    logger.info("_save_sections_to_db: found %d sections in result", len(sections))
+
     for idx, section_data in enumerate(sections):
+        title = section_data.get("title", f"Section {idx + 1}")
+        level = section_data.get("level", 1)
+        logger.info("_save_sections_to_db: saving section [%d] title=%s level=%s", idx, title, level)
         section = Section(
             document_id=document_id,
-            title=section_data.get("title", f"Section {idx + 1}"),
-            level=section_data.get("level", 1),
+            title=title,
+            level=level,
             content="",
             page_start=None,
             page_end=None,
             order_index=idx,
         )
         db.add(section)
-    
+
     await db.flush()
+    logger.info("_save_sections_to_db: flushed %d sections to DB", len(sections))
     return len(sections)
 
 
@@ -315,8 +324,9 @@ async def generate_outline_by_prompt(
     prompt: Prompt | None = result.scalar_one_or_none()
     if prompt is None:
         raise NotFoundException("Prompt not found")
-    if not prompt.edited_prompt:
-        raise BadRequest("Prompt edited_prompt is empty")   
+    system_prompt = prompt.edited_prompt or prompt.original_prompt
+    if not system_prompt:
+        raise BadRequestException("Prompt edited_prompt and original_prompt are both empty")   
     
     project_id = prompt.project_id
     document_id = prompt.document_id
@@ -333,7 +343,6 @@ async def generate_outline_by_prompt(
 
     service = DeepseekService()
     user_prompt = "按要求生成大纲"
-    system_prompt = prompt.edited_prompt
 
     try:
         result = await service.generate_txt_from_prompt(
