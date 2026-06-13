@@ -115,7 +115,8 @@ class Document(Base, TimestampMixin):
     subject_code: Mapped[str] = mapped_column(
         String(20),
         nullable=True,
-        comment="学科ID（专业代码）",
+        default="08",
+        comment="学科ID（专业代码，默认08工学）",
     )
     template_id: Mapped[Optional[int]] = mapped_column(
         Integer,

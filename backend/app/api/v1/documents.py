@@ -455,7 +455,7 @@ async def create_sections_prompt(
     # 4. 构建 prompt
     prompt_prompts = {}
     params = {
-        "major_name": get_subject_name_by_code(document.subject_code)
+        "major_name": get_subject_name_by_code(document.subject_code or "08")
     }
     logger.info("create_sections_prompt: params=%s", params)
     for i, paragraph in enumerate(update_paragraphs):
