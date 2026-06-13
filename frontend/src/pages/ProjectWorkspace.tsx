@@ -59,6 +59,7 @@ export function ProjectWorkspace() {
 
     // Generation state
     const [isAutoGenerating, setIsAutoGenerating] = useState(false);
+    const [isGeneratingContent, setIsGeneratingContent] = useState(false);
     const [isDownloading, setIsDownloading] = useState<string | null>(null);
     const [isPreviewing, setIsPreviewing] = useState<Record<string, boolean>>({});
     const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
@@ -433,6 +434,61 @@ export function ProjectWorkspace() {
             alert(`生成配图失败：${getApiErrorMessage(err, '请稍后重试。')}`);
         } finally {
             setIsAutoGenerating(false);
+        }
+    };
+
+    /** Generate content for selected sections */
+    const handleGenerateContent = async () => {
+        if (!id) return;
+
+        const parsedDoc = documents.find((d) => d.parse_status === 'completed' && Array.isArray(d.sections) && d.sections.length > 0);
+        if (!parsedDoc) {
+            alert('请先上传文档并等待解析完成，再生成正文。');
+            return;
+        }
+
+        if (promptMode === 'sections' && selectedSectionIndices.length === 0) {
+            alert('请至少选择一个章节。');
+            return;
+        }
+
+        setIsGeneratingContent(true);
+        try {
+            // 步骤1: 创建 Prompt
+            const promptResponse = await api.post(`/projects/${id}/sections/prompt`, {
+                document_id: parsedDoc.id,
+                section_indices: selectedSectionIndices.length ? selectedSectionIndices : null,
+            });
+
+            const promptIds = promptResponse.data.prompt_prompts.map((p: any) => p.id) || [];
+            if (promptIds.length === 0) {
+                alert('创建Prompt失败，请稍后重试。');
+                return;
+            }
+            const promptId = promptIds[0];
+            setPromptRequest(promptResponse.data.prompt_prompts.find(p => p.id === promptId)?.prompt_request || '');
+
+            // 步骤2: 生成正文内容
+            const payload: any = {
+                document_id: parsedDoc.id,
+                prompt_ids: promptIds,
+            };
+
+            const generateResponse = await api.post(`/sections/generate`, payload);
+            if (generateResponse.data.success !== true) {
+                alert('生成正文失败，请稍后重试。');
+                return;
+            } else {
+                alert(`成功生成 ${generateResponse.data.section_count || 0} 个段落`);
+            }
+
+            // Refresh to pick up updated sections
+            await fetchProjectData(id, { showLoader: false });
+        } catch (err: any) {
+            console.error('Failed to generate content', err);
+            alert(`生成正文失败：${getApiErrorMessage(err, '请稍后重试。')}`);
+        } finally {
+            setIsGeneratingContent(false);
         }
     };
 
@@ -827,7 +883,7 @@ export function ProjectWorkspace() {
                                 value={promptRequest}
                                 onChange={(e) => setPromptRequest(e.target.value)}
                                 placeholder="例如：只生成一张整体架构图（包含输入、编码器、融合模块、输出），突出本文主要贡献点。"
-                                className="min-h-[70px]"
+                                className="min-h-[120px]"
                                 disabled={templateMode}
                             />
                             <div className="flex items-center justify-between gap-2 mt-3">
@@ -948,8 +1004,15 @@ export function ProjectWorkspace() {
                         </div>
                     </div>
                     </CardContent>
-                    <CardFooter className="p-4 border-t bg-muted/10">
-                        <Button className="w-full font-semibold" onClick={handleAutoGenerate} disabled={isAutoGenerating}>
+                    <CardFooter className="p-4 border-t bg-muted/10 flex gap-2">
+                        <Button className="flex-1 font-semibold" onClick={handleGenerateContent} disabled={isGeneratingContent}>
+                            {isGeneratingContent ? (
+                                <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> 生成正文中...</>
+                            ) : (
+                                <><FileText className="w-4 h-4 mr-2" /> 生成正文</>
+                            )}
+                        </Button>
+                        <Button className="flex-1 font-semibold" onClick={handleAutoGenerate} disabled={isAutoGenerating}>
                             {isAutoGenerating ? (
                                 <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> 生成配图中...</>
                             ) : (

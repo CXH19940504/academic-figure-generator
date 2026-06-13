@@ -138,7 +138,7 @@ export function Generate() {
             </div>
 
             <div className="space-y-6">
-               <Card className="h-full min-h-[400px] flex flex-col">
+               <Card className="h-full min-h-[600px] flex flex-col">
                   <CardHeader>
                      <CardTitle>生成预览</CardTitle>
                      <CardDescription>您生成的配图将在此处显示。</CardDescription>

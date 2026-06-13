@@ -12,11 +12,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
+from app.api.base import get_project
 from app.config import get_settings
 from app.core.exceptions import BadRequestException, ExternalAPIException, NotFoundException
 from app.dependencies import get_db
 from app.models.image import Image
-from app.models.project import Project
 from app.models.prompt import Prompt
 from app.schemas.image import (
     ImageDirectGenerateRequest,
@@ -29,14 +29,6 @@ from app.services.local_storage_service import LocalStorageService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="", tags=["Images"])
-
-
-async def _get_project(project_id: str, db: AsyncSession) -> Project:
-    result = await db.execute(select(Project).where(Project.id == project_id))
-    project: Project | None = result.scalar_one_or_none()
-    if project is None or project.status == "deleted":
-        raise NotFoundException("Project not found")
-    return project
 
 
 def _image_to_response(image: Image, download_url: str | None = None) -> ImageResponse:
@@ -257,7 +249,7 @@ async def generate_image_direct(
             await db.refresh(project)
         project_id = project.id
     else:
-        await _get_project(project_id, db)
+        await get_project(project_id, db)
 
     image = Image(
         prompt_id=None,
@@ -295,7 +287,7 @@ async def list_project_images(
     project_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    await _get_project(project_id, db)
+    await get_project(project_id, db)
     result = await db.execute(
         select(Image)
         .where(Image.project_id == project_id)

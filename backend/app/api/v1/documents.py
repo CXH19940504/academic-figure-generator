@@ -7,16 +7,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.base import get_document, get_project, get_project_or_create, get_prompt, get_template
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.dependencies import get_db
 from app.models.document import Document, Section
 from app.models.prompt import Prompt
 from app.schemas import get_subject_name_by_code
-from app.schemas.document import MaterialType, PaperType
+from app.schemas.common import MaterialType, PaperType
 from app.models.project import Project, Template
 from app.schemas.document import (
     DocumentCreate, DocumentResponse, OutlineGenerateRequest, OutlineGenerateResponse,
-    OutlinePromptCreateRequest, OutlinePromptResponse
+    OutlinePromptCreateRequest, OutlinePromptResponse, SectionGenerateRequest, SectionGenerateResponse,
+    SectionPromptRequest, SectionPromptResponse
 )
 from app.services.local_storage_service import LocalStorageService
 from app.services.deepseek_service import DeepseekService
@@ -26,67 +28,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="", tags=["Documents"])
 
 
-async def _get_project(project_id: str, db: AsyncSession) -> Project:
-    result = await db.execute(select(Project).where(Project.id == project_id))
-    project: Project | None = result.scalar_one_or_none()
-    if project is None or project.status == "deleted":
-        raise NotFoundException("Project not found")
-    return project
-
-async def _get_document(document_id: str, db: AsyncSession) -> Document:
-    result = await db.execute(select(Document).where(Document.id == document_id))
-    document: Document | None = result.scalar_one_or_none()
-    if document is None:
-        raise NotFoundException("Document not found")
-    return document
-
-
-async def _get_project_or_create(project_id: str | None, db: AsyncSession, project_name: str) -> Project:
-    if project_id is None:
-        # Auto-create or reuse a default project
-        result = await db.execute(
-            select(Project).where(
-                Project.name == project_name,
-                Project.status == "active",
-            )
-        )
-        project = result.scalar_one_or_none()
-        if project is None:
-            project = Project(
-                name=project_name,
-                description=f"直接创建的{project_name}",
-            )
-            db.add(project)
-            await db.flush()
-            await db.refresh(project)
-        project_id = project.id
-    else:
-        project = await _get_project(project_id, db)
-    return project
-
-
-async def _get_template(template_id: str, db: AsyncSession) -> Template:
-    result = await db.execute(select(Template).where(Template.id == template_id))
-    template: Template | None = result.scalar_one_or_none()
-    if template is None:
-        raise NotFoundException("Template not found")
-    return template
-
-
-async def _get_prompt(prompt_id: str, db: AsyncSession) -> Prompt:
-    result = await db.execute(select(Prompt).where(Prompt.id == prompt_id))
-    prompt: Prompt | None = result.scalar_one_or_none()
-    if prompt is None:
-        raise NotFoundException("Prompt not found")
-    return prompt
-
-
 @router.get("/projects/{project_id}/documents", response_model=list[DocumentResponse])
 async def list_project_documents(
     project_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    await _get_project(project_id, db)
+    await get_project(project_id, db)
     result = await db.execute(
         select(Document)
         .where(Document.project_id == project_id)
@@ -112,7 +59,7 @@ async def upload_document(
     Accepts DOCX or TXT files. The file is stored locally and parsed
     synchronously (inline).
     """
-    project = await _get_project(project_id, db)
+    project = await get_project(project_id, db)
 
     contents = await file.read()
     file_size = len(contents)
@@ -183,14 +130,23 @@ async def get_document(
     return DocumentResponse.model_validate(document)
 
 
-def _build_outline_system_prompt(params: dict) -> str:
+def _build_system_prompt(skill_name: str, params: dict) -> str:
     """构建大纲生成的 system prompt"""
-    from app.services.deepseek_service import DeepseekService, SystemPromptName
     service = DeepseekService()
-    system_prompt = service._get_skill_content(SystemPromptName.OUTLINE.value)
+    system_prompt = service._get_skill_content(skill_name)
     for key, value in params.items():
         system_prompt = system_prompt.replace("{% " + key + " %}", str(value or ""))
     return system_prompt
+
+def _build_section_content(sections: list[dict]) -> str:
+    """构建章节内容"""
+    content = ""
+    for section in sections:
+        title = section.get("title", "")
+        level = section.get("level", 1)
+        content += f"<heading{level}>{title}</heading{level}>\n"
+    content += "<section>{% section_content %}</section>"
+    return content
 
 
 async def _save_sections_to_db(result: dict, document_id: str, db: AsyncSession) -> int:
@@ -236,19 +192,19 @@ async def create_outline_prompt(
         Created prompt with ID and system prompt.
     """
     # 1. 获取或创建项目
-    project = await _get_project_or_create(data.project_id, db, "直接生成大纲")
+    project = await get_project_or_create(data.project_id, db, "直接生成大纲")
     project_id = project.id
 
     # 2. 获取模板
     if data.template_id is not None:
-        template = await _get_template(data.template_id, db)
+        template = await get_template(data.template_id, db)
     else:
         raise BadRequestException("template_id is required")
     template_content = template.content
 
     # 3.获取或创建文档
     if data.document_id is not None:
-        document = await _get_document(data.document_id, db)
+        document = await get_document(data.document_id, db)
     else:
         # 创建 Document
         document = Document(uuid="", storage_path="")
@@ -276,11 +232,11 @@ async def create_outline_prompt(
         "paper_type": data.degree or "" + PaperType.get_name(data.paper_type),
         "template_content": template_content,
     }
-    system_prompt = _build_outline_system_prompt(params)
+    system_prompt = _build_system_prompt(MaterialType.OUTLINE.name, params)
 
     # 5. 获取或创建 Prompt
     if data.prompt_id is not None:
-        prompt = await _get_prompt(data.prompt_id, db)
+        prompt = await get_prompt(data.prompt_id, db)
     else:
         prompt = Prompt(
             project_id=project_id,
@@ -350,7 +306,7 @@ async def generate_outline_by_prompt(
             system_prompt=system_prompt,
             material_type=MaterialType.OUTLINE,
         )
-        await _save_sections_to_db(result, document_id, db)
+        section_count = await _save_sections_to_db(result, document_id, db)
         # 更新 Document 状态
         document.parse_status = "completed"
         await db.flush()
@@ -359,6 +315,7 @@ async def generate_outline_by_prompt(
         return OutlineGenerateResponse(
             success=True,
             message="大纲生成成功",
+            data={'section_count': section_count},
             document_id=document_id,
             project_id=project_id,
             duration_ms=result.get("duration_ms", 0),
@@ -379,11 +336,11 @@ async def generate_outline_direct(
     if not data.outline_prompt:
         raise ValueError("自定义系统prompt不能为空")
     # 1. 获取或创建项目
-    project = await _get_project_or_create(data.project_id, db, "直接生成大纲")
+    project = await get_project_or_create(data.project_id, db, "直接生成大纲") 
     project_id = project.id
     # 2.获取或创建文档
     if data.document_id is not None:
-        document = await _get_document(data.document_id, db)
+        document = await get_document(data.document_id, db)
     else:
         # 创建 Document
         document = Document(
@@ -404,7 +361,7 @@ async def generate_outline_direct(
 
     # 3. 获取或创建 Prompt
     if data.prompt_id is not None:
-        prompt = await _get_prompt(data.prompt_id, db)
+        prompt = await get_prompt(data.prompt_id, db)
     else:
         prompt = Prompt(
             project_id=project_id,
@@ -428,7 +385,7 @@ async def generate_outline_direct(
             system_prompt=data.outline_prompt,
             material_type=MaterialType.OUTLINE,
         )
-        await _save_sections_to_db(result, document_id, db)
+        section_count = await _save_sections_to_db(result, document_id, db)
         document.parse_status = "completed"
         await db.flush()
         await db.refresh(document)
@@ -436,6 +393,7 @@ async def generate_outline_direct(
         return OutlineGenerateResponse(
             success=True,
             message="大纲生成成功",
+            data={'section_count': section_count},
             document_id=document_id,
             project_id=project_id,
             duration_ms=result.get("duration_ms", 0),
@@ -445,3 +403,160 @@ async def generate_outline_direct(
         await db.flush()
         await db.refresh(document)
         raise e
+
+
+@router.post("/projects/{project_id}/sections/prompt", response_model=SectionPromptResponse)
+async def create_sections_prompt(
+    project_id: str,
+    data: SectionPromptRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """创建章节正文的Prompt并插入数据库。
+
+    Args:
+        project_id: Project ID.
+        data: Request body with document ID and section indices.
+        db: Database session.
+
+    Returns:
+        Created prompt with ID and system prompt.
+    """
+    # 1. 验证项目是否存在
+    await get_project(project_id, db)
+
+    # 2. 获取 Document
+    document = await get_document(data.document_id, db)
+    if document.project_id != project_id:
+        raise BadRequestException("Document does not belong to this project")
+    document.parse_status = "generating"
+    await db.refresh(document)
+
+    # 3. 合并所有子章节
+    update_paragraphs = []
+    paragraph = []
+    for idx in data.section_indices:
+        section = document.sections[idx]
+        if not paragraph or section["level"] >= paragraph[-1]["level"]:
+            paragraph.append(section)
+        else:
+            update_paragraphs.append(paragraph)
+            paragraph.clear()
+    if paragraph:
+        update_paragraphs.append(paragraph)
+
+    # 4. 构建 prompt
+    prompt_prompts = {}
+    params = {
+        "major_name": get_subject_name_by_code(document.major_name)
+    }
+    for paragraph in update_paragraphs:
+        try:
+            material_type = MaterialType[paragraph[0]["material_type"]]
+        except KeyError:
+            material_type = MaterialType.SECTION
+        system_prompt = _build_system_prompt(material_type.name, params)
+        # 合并相同层级的章节
+        user_prompt = _build_section_content(paragraph)
+        prompt = Prompt(
+            title=data.title,
+            material_type=material_type.value,
+            project_id=project_id,
+            document_id=document.id,
+            figure_number=0,
+            original_prompt=system_prompt+"\nUser Input:"+user_prompt,
+            edited_prompt="",
+            generation_status="pending",
+            source_sections=[section["id"] for section in paragraph],
+        )
+        db.add(prompt)
+        await db.flush()
+        prompt_prompts[prompt.id] = prompt.original_prompt
+        paragraph.clear()
+
+    return SectionPromptResponse(
+        success=True,
+        message="Prompt创建成功",
+        prompt_prompts=prompt_prompts,
+        document_id=document.id,
+        project_id=project_id,
+    )
+
+
+async def _generate_sections(prompt_id: str, db: AsyncSession, service: DeepseekService):
+    """根据prompt_id生成正文"""
+    # 获取 Prompt
+    prompt = await get_prompt(prompt_id, db)
+    try:
+        prompt_str = prompt.edited_prompt.split("\nUser Input:")
+        system_prompt, user_prompt = prompt_str[0].strip(), prompt_str[1].strip()
+        result = await service.generate_txt_from_prompt(
+            user_prompt=user_prompt,
+            system_prompt=system_prompt,
+            material_type=prompt.material_type,
+        )
+        section_count = await _save_sections_to_db(result, prompt.document_id, db)
+        sections = result.get("data", [])
+        for idx, section_id in enumerate(prompt.source_sections):    
+            await db.execute(update(Section).values(
+                title=sections[idx]["title"],
+                content=sections[idx]["content"],
+            ).where(Section.id == section_id))
+        # 更新 Prompt 状态
+        prompt.generation_status = "completed"
+        await db.flush()
+        await db.refresh(prompt)
+        return section_count
+    except Exception as e:
+        prompt.generation_status = "failed"
+        await db.flush()
+        await db.refresh(prompt)
+        raise e
+
+
+@router.post("/sections/generate", response_model=SectionGenerateResponse)
+async def generate_sections_content(
+    data: SectionGenerateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """根据Prompt ID生成章节正文内容。
+
+    Args:
+        data: Request body with generation parameters.
+            document_id: Document ID.
+            prompt_ids: Prompt IDs.
+        db: Database session.
+
+    Returns:
+        Updated sections with generated content.
+    """
+    # prompt_ids 不能为空
+    if not data.prompt_ids:
+        raise BadRequestException("prompt_ids is empty")
+        
+    # 获取 Document
+    document: Document = await get_document(data.document_id, db)
+
+    # 清空现有 sections 的 content
+    if document.sections:
+        for section in document.sections:
+            if section.get("order_index") in data.section_indices:
+                section["content"] = ""
+        await db.flush()
+
+    # 调用 API
+    service = DeepseekService()
+    create_tasks = []
+    for prompt_id in data.prompt_ids:
+        create_tasks.append(asyncio.create_task(
+            _generate_sections(prompt_id, db, service)))
+    section_counts = await asyncio.gather(*create_tasks)
+
+    # 更新 Document 状态
+    document.parse_status = "completed"
+    await db.flush()
+
+    return SectionGenerateResponse(
+        success=True,
+        message="Sections generated successfully",
+        section_count=sum(section_counts),
+    )

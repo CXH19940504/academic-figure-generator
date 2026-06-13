@@ -15,7 +15,7 @@ from app.dependencies import get_db
 from app.models.document import Document
 from app.models.project import Project
 from app.models.prompt import Prompt
-from app.schemas.document import MaterialType
+from app.schemas.common import MaterialType
 from app.schemas.prompt import (
     PromptGenerateRequest,
     PromptResponse,
@@ -70,8 +70,7 @@ async def generate_prompts(
 
     Requires at least one parsed document attached to the project.
     """
-    settings = get_settings()
-    project = await _get_project(project_id, db)
+    project = await get_project(project_id, db)
 
     # Find the most recent completed document
     result = await db.execute(
@@ -199,7 +198,7 @@ async def list_project_prompts(
             f"Must be one of {[m.value for m in MaterialType]}"
         )
 
-    await _get_project(project_id, db)
+    await get_project(project_id, db)
     result = await db.execute(
         select(Prompt)
         .where(Prompt.project_id == project_id, Prompt.material_type == material_type)

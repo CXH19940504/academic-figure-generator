@@ -18,11 +18,12 @@ from typing import Any
 
 
 from app.models.prompt import Prompt
-from app.schemas.document import MaterialType
+from app.schemas.common import MaterialType
 import httpx
 
 from app.config import get_settings
 from app.core.exceptions import ExternalAPIException
+from app.core.prompts import system_prompt
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -47,6 +48,19 @@ def _load_skill_content(skill_name: str) -> str:
     return _SKILL_PATH.read_text(encoding="utf-8")
 
 
+def _get_prompt_template(material_name: str, lang: str = "中文") -> str:
+    """Get the prompt template for the specified material."""
+    try:
+        template_id = system_prompt.LANGUAGES.index(lang)
+        MaterialType[material_name]
+        templates = getattr(system_prompt, material_name + "_SYSTEM_PROMPT")
+        # 确保索引不越界，当模板列表长度不足时使用最后一个可用的模板
+        safe_index = min(template_id, len(templates) - 1)
+        return templates[safe_index]
+    except (KeyError, AttributeError):
+        return system_prompt.SECTION_SYSTEM_PROMPT[0]
+
+
 class DeepseekService:
     """Integration with Deepseek via OpenAI-compatible API for generating figure prompts."""
 
@@ -64,105 +78,12 @@ class DeepseekService:
     def _get_skill_content(self, skill_name: str) -> str:
         """Get the content of the specified skill."""
         if skill_name not in self._skills:
-            self._skills[skill_name] = _load_skill_content(SystemPromptName(skill_name).value)
+            self._skills[skill_name] = _get_prompt_template(skill_name)
         
         if not self._skills[skill_name]:
             logger.warning("%s content loaded — prompts may be generic.", skill_name)
 
         return self._skills[skill_name]
-
-    async def generate_outline(
-        self,
-        params: dict[str, Any],
-        system_prompt: str | None = None,
-        stream: bool = True,
-        model: str = settings.DEEPSEEK_MODEL,
-        project_id: str = None,
-        document_id: str = None,
-        db = None,
-    ) -> dict:
-        """Call Deepseek via OpenAI-compatible API to generate outline.
-
-        Parameters
-        ----------
-        params:
-            Dictionary containing the paper's parameters.
-            major_name:
-                Major name of the paper.
-            paper_title:
-                Title of the paper.
-            word_count:
-                Target word count for the paper.
-            paper_type:
-                Type of the paper (e.g., '硕士毕业论文', '本科毕业论文').
-            template_content:
-                Optional template content for the outline.
-        stream:
-            Whether to use streaming API. Default is True for better latency.
-        model:
-            Deepseek model to use. Defaults to settings.DEEPSEEK_MODEL.
-        project_id:
-            Project ID for saving prompt.
-        document_id:
-            Document ID for saving prompt.
-        db:
-            Database session for saving prompt.
-
-        Returns
-        -------
-        dict
-            ``{"sections": list[dict], "duration_ms": int, "system_prompt": str}``
-        """
-        if not system_prompt:
-            system_prompt = self._get_skill_content(SystemPromptName.OUTLINE.value)
-            for key, value in params.items():
-                system_prompt = system_prompt.replace("{% " + key + " %}", str(value))
-        user_prompt = "按要求生成大纲"
-
-        prompt = None
-        if db and project_id and document_id:
-            prompt = Prompt(
-                project_id=project_id,
-                document_id=document_id,
-                material_type=MaterialType.OUTLINE.value,
-                original_prompt=system_prompt,
-                generation_status="pending",
-            )
-            db.add(prompt)
-            await db.flush()
-
-        start_time = time.monotonic()
-
-        try:
-            if stream:
-                result_text = await self._call_deepseek_api_stream(user_prompt, model, system_prompt)
-            else:
-                result_text = await self._call_deepseek_api(user_prompt, model, system_prompt)
-        except Exception as exc:
-            duration_ms = int((time.monotonic() - start_time) * 1000)
-            logger.error("Deepseek API error after %d ms: %s", duration_ms, exc)
-            raise ExternalAPIException(
-                "Deepseek", f"API error: {exc}"
-            ) from exc
-
-        duration_ms = int((time.monotonic() - start_time) * 1000)
-        sections = self._parse_outline_response(result_text)
-        if prompt:
-            prompt.generation_status = "success"
-            await db.refresh(prompt)
-
-        logger.info(
-            "Deepseek API call completed in %d ms: %d outline items (stream=%s)",
-            duration_ms,
-            len(sections),
-            stream,
-        )
-
-        return {
-            "sections": sections,
-            "duration_ms": duration_ms,
-            "system_prompt": system_prompt,
-        }
 
     async def generate_txt_from_prompt(
         self,
@@ -207,9 +128,9 @@ class DeepseekService:
 
         duration_ms = int((time.monotonic() - start_time) * 1000)
         if material_type == MaterialType.OUTLINE:
-            sections = self._parse_outline_response(result_text)
+            sections = self._parse_sections_response(result_text)
             logger.info(
-                "Deepseek API call completed in %d ms: %d outline items (stream=%s)",
+                "Deepseek API call completed in %d ms: %d sections items (stream=%s)",
                 duration_ms,
                 len(sections),
                 stream,
@@ -336,10 +257,10 @@ class DeepseekService:
 
         return "".join(content_chunks)
 
-    def _parse_outline_response(self, text: str) -> list[dict]:
+    def _parse_sections_response(self, text: str) -> list[dict]:
         """
-        Extract and validate the JSON array of outline dicts from Deepseek's response.
-        使用 <heading1></heading1>、<heading2></heading2> 和 <heading3></heading3> 解析返回结果，提取大纲信息
+        Extract and validate the JSON array of sections dicts from Deepseek's response.
+        使用 <heading1></heading1>、<heading2></heading2> 和 <heading3></heading3> 解析返回结果，提取正文信息
     
         例子：
 
@@ -368,7 +289,7 @@ class DeepseekService:
         # 使用正则表达式解析 heading 标签（使用反向引用确保开闭标签一致）
         # 匹配 <heading1>...</heading1>, <heading2>...</heading2>, <heading3>...</heading3>
         heading_pattern = re.compile(
-            r"<heading([1-3])>(.*?)</heading\1>",
+            r"<heading([1-3])>(.*?)</heading\1>(?:\s*<section>(.*?)</section>)?",
             re.DOTALL
         )
 
@@ -378,6 +299,7 @@ class DeepseekService:
         for match in heading_pattern.finditer(cleaned):
             level = int(match.group(1))  # 1, 2, or 3
             title = match.group(2).strip()
+            content = match.group(3).strip() if match.group(3) else ""
             
             if not title:
                 logger.warning("Empty title for heading%d at position %d", level, match.start())
@@ -388,18 +310,19 @@ class DeepseekService:
                 "level": level,
                 "title": title,
                 "order": order,
+                "content": content,
             })
 
         if not outline:
-            logger.warning("Could not parse outline from Deepseek response: no heading tags found")
+            logger.warning("Could not parse sections from Deepseek response: no heading tags found")
             return []
         sections = self._validate_outline(outline)
-        logger.info("Parsed %d outline items from Deepseek response", len(sections))
+        logger.info("Parsed %d sections items from Deepseek response", len(sections))
         return sections
 
     @staticmethod
-    def _validate_outline(outline: list) -> list[dict]:
-        """Validate and normalize the list of outline dicts."""
+    def _validate_sections(sections: list) -> list[dict]:
+        """Validate and normalize the list of sections dicts."""
         valid: list[dict] = []
         for i, section in enumerate(outline):
             if not isinstance(section, dict):

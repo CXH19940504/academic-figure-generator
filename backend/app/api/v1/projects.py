@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFoundException
+from app.api.base import get_project
 from app.dependencies import get_db
 from app.models.document import Document
 from app.models.image import Image
@@ -19,27 +19,9 @@ from app.schemas.project import (
     ProjectResponse,
     ProjectUpdate,
 )
+
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["Projects"])
-
-
-async def _get_project(project_id: str, db: AsyncSession) -> Project:
-    result = await db.execute(select(Project).where(Project.id == project_id))
-    project: Project | None = result.scalar_one_or_none()
-    if project is None or project.status == "deleted":
-        raise NotFoundException("Project not found")
-    return project
-
-
-async def _get_project_by_name(name: str, db: AsyncSession) -> Project:
-    logger.info("Looking up project by name: '%s'", name)
-    result = await db.execute(select(Project).where(Project.name == name))
-    project: Project | None = result.scalar_one_or_none()
-    logger.info("Query result for name '%s': %s", name, "found" if project else "NOT FOUND")
-    if project is None or project.status == "deleted":
-        logger.warning("Project not found or deleted: name='%s', status=%s", name, project.status if project else None)
-        raise NotFoundException("Project not found")
-    return project
 
 
 async def _enrich_response(project: Project, db: AsyncSession) -> ProjectResponse:
@@ -102,11 +84,17 @@ async def list_projects(
 
 
 @router.get("/by_name", response_model=ProjectResponse)
-async def get_project_by_name(
+async def get_project_by_name_route(
     name: str = Query(..., description='Project name'),
     db: AsyncSession = Depends(get_db),
 ):
-    project = await _get_project_by_name(name, db)
+    # 先尝试查找现有项目
+    result = await db.execute(
+        select(Project).where(Project.name == name, Project.status == "active")
+    )
+    project: Project | None = result.scalar_one_or_none()
+
+    # 如果不存在，自动创建
     if project is None:
         project = Project(
             name=name,
@@ -115,6 +103,7 @@ async def get_project_by_name(
         db.add(project)
         await db.flush()
         await db.refresh(project)
+
     return ProjectResponse.model_validate(project)
 
 
@@ -123,7 +112,7 @@ async def get_project(
     project_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    project = await _get_project(project_id, db)
+    project = await get_project(project_id, db)
     return await _enrich_response(project, db)
 
 
@@ -133,7 +122,7 @@ async def update_project(
     data: ProjectUpdate,
     db: AsyncSession = Depends(get_db),
 ):
-    project = await _get_project(project_id, db)
+    project = await get_project(project_id, db)
     if data.name is not None:
         project.name = data.name
     if data.description is not None:
@@ -150,7 +139,7 @@ async def delete_project(
     project_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    project = await _get_project(project_id, db)
+    project = await get_project(project_id, db)
     project.status = "deleted"
     await db.commit()
     return MessageResponse(message="Project deleted successfully")

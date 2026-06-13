@@ -50,12 +50,12 @@ SUBJECTS = [
 ]
 
 
-def get_subject_name_by_code(code: str) -> str | None:
+def get_subject_name_by_code(code: str) -> str:
     """通过学科代码获取学科名称"""
     for subject in SUBJECTS:
         if subject["code"] == code:
             return subject["name"]
-    return None
+    return ""
 
 
 __all__ = [

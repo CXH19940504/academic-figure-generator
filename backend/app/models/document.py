@@ -147,7 +147,7 @@ class Document(Base, TimestampMixin):
         String(20),
         default="pending",
         nullable=False,
-        comment="pending/parsing/completed/failed",
+        comment="pending/parsing/generating/completed/failed",
     )
     parse_error: Mapped[Optional[str]] = mapped_column(
         Text,

@@ -521,7 +521,7 @@ export function Outline() {
                   <CardContent>
                      <Textarea
                         placeholder="尚未设置prompt..."
-                        className="min-h-[120px]"
+                        className="min-h-[200px]"
                         value={outlinePrompt}
                         onChange={e => setOutlinePrompt(e.target.value)}
                      />
@@ -551,7 +551,7 @@ export function Outline() {
                         {isGenerating ? (
                            <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> 生成中...</>
                         ) : (
-                           <><Wand2 className="w-4 h-4 mr-1" /> 直接修改后的prompt</>
+                           <><Wand2 className="w-4 h-4 mr-1" /> 使用修改的prompt</>
                         )}
                      </Button>
                   </CardFooter>
@@ -579,7 +579,7 @@ export function Outline() {
                         </Button>
                      )}
                   </CardHeader>
-                  <CardContent className="min-h-[400px] bg-muted/10 border-t">
+                  <CardContent className="min-h-[600px] bg-muted/10 border-t">
                      {isGenerating || loadingDocuments ? (
                         <div className="flex items-center justify-center h-full">
                            <div className="text-center">

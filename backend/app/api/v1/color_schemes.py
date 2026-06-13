@@ -1,12 +1,11 @@
 """Color scheme CRUD endpoints — personal-use (no auth)."""
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import BadRequestException, NotFoundException
+from app.api.base import get_schema
+from app.core.exceptions import BadRequestException
 from app.dependencies import get_db
-from app.models.color_scheme import ColorScheme
 from app.schemas.color_scheme import (
     ColorSchemeCreate,
     ColorSchemeResponse,
@@ -14,14 +13,6 @@ from app.schemas.color_scheme import (
 )
 
 router = APIRouter(prefix="/color-schemes", tags=["Color Schemes"])
-
-
-async def _get_scheme(scheme_id: str, db: AsyncSession) -> ColorScheme:
-    result = await db.execute(select(ColorScheme).where(ColorScheme.id == scheme_id))
-    scheme: ColorScheme | None = result.scalar_one_or_none()
-    if scheme is None:
-        raise NotFoundException("Color scheme not found")
-    return scheme
 
 
 @router.get("/", response_model=list[ColorSchemeResponse])
@@ -59,7 +50,7 @@ async def update_color_scheme(
     data: ColorSchemeUpdate,
     db: AsyncSession = Depends(get_db),
 ):
-    scheme = await _get_scheme(scheme_id, db)
+    scheme = await get_schema(scheme_id, db)
     if scheme.type == "preset":
         raise BadRequestException("Cannot edit a system preset color scheme")
 
@@ -79,7 +70,7 @@ async def delete_color_scheme(
     scheme_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    scheme = await _get_scheme(scheme_id, db)
+    scheme = await get_schema(scheme_id, db)
     if scheme.type == "preset":
         raise BadRequestException("Cannot delete a system preset color scheme")
     await db.delete(scheme)

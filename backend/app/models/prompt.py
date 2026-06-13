@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import ForeignKey, Integer, JSON, String, Text
-from app.schemas.document import MaterialType
+from app.schemas.common import MaterialType
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
