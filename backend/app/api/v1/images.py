@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from app.api.base import get_project
+from app.api.base import get_project_from_db
 from app.config import get_settings
 from app.core.exceptions import BadRequestException, ExternalAPIException, NotFoundException
 from app.dependencies import get_db
@@ -249,7 +249,7 @@ async def generate_image_direct(
             await db.refresh(project)
         project_id = project.id
     else:
-        await get_project(project_id, db)
+        await get_project_from_db(project_id, db)
 
     image = Image(
         prompt_id=None,
@@ -287,7 +287,7 @@ async def list_project_images(
     project_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    await get_project(project_id, db)
+    await get_project_from_db(project_id, db)
     result = await db.execute(
         select(Image)
         .where(Image.project_id == project_id)

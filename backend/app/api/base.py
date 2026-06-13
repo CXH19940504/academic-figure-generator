@@ -1,15 +1,16 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import NotFoundException
 from app.models.color_scheme import ColorScheme
 from app.models.document import Document
 from app.models.prompt import Prompt
 from app.models.project import Project
-from app.models.template import Template
+from app.models.project import Template
 
 
-async def get_project(project_id: str, db: AsyncSession) -> Project:
+async def get_project_from_db(project_id: str, db: AsyncSession) -> Project:
     """Get project by ID, raise NotFoundException if not found or deleted."""
     result = await db.execute(select(Project).where(Project.id == project_id))
     project: Project | None = result.scalar_one_or_none()
@@ -18,7 +19,7 @@ async def get_project(project_id: str, db: AsyncSession) -> Project:
     return project
 
 
-async def get_project_or_create(project_id: str | None, db: AsyncSession, project_name: str) -> Project:
+async def get_project_or_create_from_db(project_id: str | None, db: AsyncSession, project_name: str) -> Project:
     """Get project by ID or create a new one if not found."""
     if project_id is None:
         # Auto-create or reuse a default project
@@ -39,11 +40,11 @@ async def get_project_or_create(project_id: str | None, db: AsyncSession, projec
             await db.refresh(project)
         project_id = project.id
     else:
-        project = await get_project(project_id, db)
+        project = await get_project_from_db(project_id, db)
     return project
 
 
-async def get_schema(scheme_id: str, db: AsyncSession) -> ColorScheme:
+async def get_schema_from_db(scheme_id: str, db: AsyncSession) -> ColorScheme:
     """Get color scheme by ID, raise NotFoundException if not found."""
     result = await db.execute(select(ColorScheme).where(ColorScheme.id == scheme_id))
     scheme: ColorScheme | None = result.scalar_one_or_none()
@@ -52,16 +53,20 @@ async def get_schema(scheme_id: str, db: AsyncSession) -> ColorScheme:
     return scheme
 
 
-async def get_document(document_id: str, db: AsyncSession) -> Document:
+async def get_document_from_db(document_id: str, db: AsyncSession) -> Document:
     """Get document by ID, raise NotFoundException if not found."""
-    result = await db.execute(select(Document).where(Document.id == document_id))
+    result = await db.execute(
+        select(Document)
+        .where(Document.id == document_id)
+        .options(selectinload(Document.sections))
+    )
     document: Document | None = result.scalar_one_or_none()
     if document is None:
         raise NotFoundException("Document not found")
     return document
 
 
-async def get_template(template_id: str, db: AsyncSession) -> Template:
+async def get_template_from_db(template_id: str, db: AsyncSession) -> Template:
     """Get template by ID, raise NotFoundException if not found."""
     result = await db.execute(select(Template).where(Template.id == template_id))
     template: Template | None = result.scalar_one_or_none()
@@ -70,7 +75,7 @@ async def get_template(template_id: str, db: AsyncSession) -> Template:
     return template
 
 
-async def get_prompt(prompt_id: str, db: AsyncSession) -> Prompt:
+async def get_prompt_from_db(prompt_id: str, db: AsyncSession) -> Prompt:
     """Get prompt by ID, raise NotFoundException if not found."""
     result = await db.execute(select(Prompt).where(Prompt.id == prompt_id))
     prompt: Prompt | None = result.scalar_one_or_none()

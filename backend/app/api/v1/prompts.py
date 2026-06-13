@@ -8,12 +8,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.base import get_project_from_db
 from app.config import get_settings
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.core.prompts.color_schemes import DEFAULT_COLOR_SCHEME, PRESET_COLOR_SCHEMES
 from app.dependencies import get_db
 from app.models.document import Document
-from app.models.project import Project
 from app.models.prompt import Prompt
 from app.schemas.common import MaterialType
 from app.schemas.prompt import (
@@ -28,14 +28,6 @@ from app.services.prompt_service import PromptService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="", tags=["Prompts"])
-
-
-async def _get_project(project_id: str, db: AsyncSession) -> Project:
-    result = await db.execute(select(Project).where(Project.id == project_id))
-    project: Project | None = result.scalar_one_or_none()
-    if project is None or project.status == "deleted":
-        raise NotFoundException("Project not found")
-    return project
 
 
 def _prompt_to_response(p: Prompt) -> PromptResponse:
@@ -70,7 +62,7 @@ async def generate_prompts(
 
     Requires at least one parsed document attached to the project.
     """
-    project = await get_project(project_id, db)
+    project = await get_project_from_db(project_id, db)
 
     # Find the most recent completed document
     result = await db.execute(
@@ -198,7 +190,7 @@ async def list_project_prompts(
             f"Must be one of {[m.value for m in MaterialType]}"
         )
 
-    await get_project(project_id, db)
+    await get_project_from_db(project_id, db)
     result = await db.execute(
         select(Prompt)
         .where(Prompt.project_id == project_id, Prompt.material_type == material_type)

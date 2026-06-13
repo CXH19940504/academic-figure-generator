@@ -14,6 +14,12 @@ from app.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.middleware import setup_middleware
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
 logger = logging.getLogger(__name__)
 
 

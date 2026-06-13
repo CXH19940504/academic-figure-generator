@@ -127,7 +127,7 @@ class DeepseekService:
             raise ExternalAPIException("Deepseek", f"API error: {exc}") from exc
 
         duration_ms = int((time.monotonic() - start_time) * 1000)
-        if material_type == MaterialType.OUTLINE:
+        if material_type == MaterialType.OUTLINE or material_type == MaterialType.SECTION:
             sections = self._parse_sections_response(result_text)
             logger.info(
                 "Deepseek API call completed in %d ms: %d sections items (stream=%s)",
@@ -273,6 +273,8 @@ class DeepseekService:
         Returns:
             list[dict]: A list of outline dicts with keys: level, title, order.
         """
+        logger.info("_parse_sections_response input (len=%d):\n%s", len(text), text)
+
         if not text or not text.strip():
             logger.warning("Empty response from Deepseek")
             return []
@@ -316,7 +318,7 @@ class DeepseekService:
         if not outline:
             logger.warning("Could not parse sections from Deepseek response: no heading tags found")
             return []
-        sections = self._validate_outline(outline)
+        sections = self._validate_sections(outline)
         logger.info("Parsed %d sections items from Deepseek response", len(sections))
         return sections
 
@@ -324,7 +326,7 @@ class DeepseekService:
     def _validate_sections(sections: list) -> list[dict]:
         """Validate and normalize the list of sections dicts."""
         valid: list[dict] = []
-        for i, section in enumerate(outline):
+        for i, section in enumerate(sections):
             if not isinstance(section, dict):
                 logger.warning("Skipping non-dict outline at index %d", i)
                 continue
@@ -333,6 +335,7 @@ class DeepseekService:
                 "level": section.get("level", 1),
                 "title": section.get("title", f"Section {i + 1}"),
                 "order": section.get("order", i + 1),
+                "content": section.get("content", ""),
             }
             if not validated["title"]:
                 logger.warning("Skipping section %d: empty title", validated["order"])

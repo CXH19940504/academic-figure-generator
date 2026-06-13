@@ -1,9 +1,11 @@
 """Color scheme CRUD endpoints — personal-use (no auth)."""
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.base import get_schema
+from app.api.base import get_schema_from_db
+from app.models.color_scheme import ColorScheme
 from app.core.exceptions import BadRequestException
 from app.dependencies import get_db
 from app.schemas.color_scheme import (
@@ -50,7 +52,7 @@ async def update_color_scheme(
     data: ColorSchemeUpdate,
     db: AsyncSession = Depends(get_db),
 ):
-    scheme = await get_schema(scheme_id, db)
+    scheme = await get_schema_from_db(scheme_id, db)
     if scheme.type == "preset":
         raise BadRequestException("Cannot edit a system preset color scheme")
 
@@ -70,7 +72,7 @@ async def delete_color_scheme(
     scheme_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    scheme = await get_schema(scheme_id, db)
+    scheme = await get_schema_from_db(scheme_id, db)
     if scheme.type == "preset":
         raise BadRequestException("Cannot delete a system preset color scheme")
     await db.delete(scheme)

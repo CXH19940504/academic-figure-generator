@@ -1,13 +1,14 @@
 """Document upload and retrieval endpoints — personal-use (no auth, local storage)."""
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, UploadFile
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.base import get_document, get_project, get_project_or_create, get_prompt, get_template
+from app.api.base import get_document_from_db, get_project_from_db, get_project_or_create_from_db, get_prompt_from_db, get_template_from_db
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.dependencies import get_db
 from app.models.document import Document, Section
@@ -33,7 +34,7 @@ async def list_project_documents(
     project_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    await get_project(project_id, db)
+    await get_project_from_db(project_id, db)
     result = await db.execute(
         select(Document)
         .where(Document.project_id == project_id)
@@ -59,7 +60,7 @@ async def upload_document(
     Accepts DOCX or TXT files. The file is stored locally and parsed
     synchronously (inline).
     """
-    project = await get_project(project_id, db)
+    project = await get_project_from_db(project_id, db)
 
     contents = await file.read()
     file_size = len(contents)
@@ -138,12 +139,12 @@ def _build_system_prompt(skill_name: str, params: dict) -> str:
         system_prompt = system_prompt.replace("{% " + key + " %}", str(value or ""))
     return system_prompt
 
-def _build_section_content(sections: list[dict]) -> str:
+def _build_section_content(sections: list[Section]) -> str:
     """构建章节内容"""
     content = ""
     for section in sections:
-        title = section.get("title", "")
-        level = section.get("level", 1)
+        title = section.title or ""
+        level = section.level
         content += f"<heading{level}>{title}</heading{level}>\n"
     content += "<section>{% section_content %}</section>"
     return content
@@ -192,19 +193,19 @@ async def create_outline_prompt(
         Created prompt with ID and system prompt.
     """
     # 1. 获取或创建项目
-    project = await get_project_or_create(data.project_id, db, "直接生成大纲")
+    project = await get_project_or_create_from_db(data.project_id, db, "直接生成大纲")
     project_id = project.id
 
     # 2. 获取模板
     if data.template_id is not None:
-        template = await get_template(data.template_id, db)
+        template = await get_template_from_db(data.template_id, db)
     else:
         raise BadRequestException("template_id is required")
     template_content = template.content
 
     # 3.获取或创建文档
     if data.document_id is not None:
-        document = await get_document(data.document_id, db)
+        document = await get_document_from_db(data.document_id, db)
     else:
         # 创建 Document
         document = Document(uuid="", storage_path="")
@@ -236,7 +237,7 @@ async def create_outline_prompt(
 
     # 5. 获取或创建 Prompt
     if data.prompt_id is not None:
-        prompt = await get_prompt(data.prompt_id, db)
+        prompt = await get_prompt_from_db(data.prompt_id, db)
     else:
         prompt = Prompt(
             project_id=project_id,
@@ -336,11 +337,11 @@ async def generate_outline_direct(
     if not data.outline_prompt:
         raise ValueError("自定义系统prompt不能为空")
     # 1. 获取或创建项目
-    project = await get_project_or_create(data.project_id, db, "直接生成大纲") 
+    project = await get_project_or_create_from_db(data.project_id, db, "直接生成大纲") 
     project_id = project.id
     # 2.获取或创建文档
     if data.document_id is not None:
-        document = await get_document(data.document_id, db)
+        document = await get_document_from_db(data.document_id, db)
     else:
         # 创建 Document
         document = Document(
@@ -361,7 +362,7 @@ async def generate_outline_direct(
 
     # 3. 获取或创建 Prompt
     if data.prompt_id is not None:
-        prompt = await get_prompt(data.prompt_id, db)
+        prompt = await get_prompt_from_db(data.prompt_id, db)
     else:
         prompt = Prompt(
             project_id=project_id,
@@ -422,10 +423,12 @@ async def create_sections_prompt(
         Created prompt with ID and system prompt.
     """
     # 1. 验证项目是否存在
-    await get_project(project_id, db)
+    await get_project_from_db(project_id, db)
 
     # 2. 获取 Document
-    document = await get_document(data.document_id, db)
+    document = await get_document_from_db(data.document_id, db)
+    logger.info("create_sections_prompt: document_id=%s, sections_count=%d, subject_code=%s",
+                document.id, len(document.sections), document.subject_code)
     if document.project_id != project_id:
         raise BadRequestException("Document does not belong to this project")
     document.parse_status = "generating"
@@ -433,32 +436,43 @@ async def create_sections_prompt(
 
     # 3. 合并所有子章节
     update_paragraphs = []
-    paragraph = []
+    paragraph: list[Section] = []
     for idx in data.section_indices:
         section = document.sections[idx]
-        if not paragraph or section["level"] >= paragraph[-1]["level"]:
+        logger.debug("create_sections_prompt: processing section idx=%d, title=%s, level=%d, material_type=%d",
+                     idx, section.title, section.level, section.material_type)
+        if not paragraph or section.level >= paragraph[-1].level:
             paragraph.append(section)
         else:
-            update_paragraphs.append(paragraph)
+            update_paragraphs.append(paragraph.copy())
             paragraph.clear()
+            paragraph.append(section)
     if paragraph:
         update_paragraphs.append(paragraph)
+    logger.info("create_sections_prompt: built %d paragraphs from %d sections",
+                len(update_paragraphs), len(data.section_indices))
 
     # 4. 构建 prompt
     prompt_prompts = {}
     params = {
-        "major_name": get_subject_name_by_code(document.major_name)
+        "major_name": get_subject_name_by_code(document.subject_code)
     }
-    for paragraph in update_paragraphs:
+    logger.info("create_sections_prompt: params=%s", params)
+    for i, paragraph in enumerate(update_paragraphs):
         try:
-            material_type = MaterialType[paragraph[0]["material_type"]]
+            material_type = MaterialType[paragraph[0].material_type]
         except KeyError:
             material_type = MaterialType.SECTION
+        logger.info("create_sections_prompt: paragraph[%d] head_section=%s, material_type=%s, section_count=%d",
+                    i, paragraph[0].title, material_type.name, len(paragraph))
         system_prompt = _build_system_prompt(material_type.name, params)
         # 合并相同层级的章节
         user_prompt = _build_section_content(paragraph)
+        logger.debug("create_sections_prompt: paragraph[%d] system_prompt_len=%d, user_prompt_len=%d",
+                     i, len(system_prompt), len(user_prompt))
+        prompt_title = paragraph[0].title
         prompt = Prompt(
-            title=data.title,
+            title=prompt_title,
             material_type=material_type.value,
             project_id=project_id,
             document_id=document.id,
@@ -466,12 +480,16 @@ async def create_sections_prompt(
             original_prompt=system_prompt+"\nUser Input:"+user_prompt,
             edited_prompt="",
             generation_status="pending",
-            source_sections=[section["id"] for section in paragraph],
+            source_sections=[section.id for section in paragraph],
         )
         db.add(prompt)
         await db.flush()
         prompt_prompts[prompt.id] = prompt.original_prompt
-        paragraph.clear()
+        logger.info("create_sections_prompt: created prompt id=%s, title=%s, material_type=%s, source_sections=%s",
+                    prompt.id, prompt.title, prompt.material_type, prompt.source_sections)
+
+    logger.info("create_sections_prompt: done, created %d prompts for document_id=%s",
+                len(prompt_prompts), document.id)
 
     return SectionPromptResponse(
         success=True,
@@ -482,35 +500,38 @@ async def create_sections_prompt(
     )
 
 
-async def _generate_sections(prompt_id: str, db: AsyncSession, service: DeepseekService):
-    """根据prompt_id生成正文"""
-    # 获取 Prompt
-    prompt = await get_prompt(prompt_id, db)
-    try:
-        prompt_str = prompt.edited_prompt.split("\nUser Input:")
-        system_prompt, user_prompt = prompt_str[0].strip(), prompt_str[1].strip()
-        result = await service.generate_txt_from_prompt(
-            user_prompt=user_prompt,
-            system_prompt=system_prompt,
-            material_type=prompt.material_type,
-        )
-        section_count = await _save_sections_to_db(result, prompt.document_id, db)
-        sections = result.get("data", [])
-        for idx, section_id in enumerate(prompt.source_sections):    
-            await db.execute(update(Section).values(
-                title=sections[idx]["title"],
-                content=sections[idx]["content"],
-            ).where(Section.id == section_id))
-        # 更新 Prompt 状态
-        prompt.generation_status = "completed"
-        await db.flush()
-        await db.refresh(prompt)
-        return section_count
-    except Exception as e:
-        prompt.generation_status = "failed"
-        await db.flush()
-        await db.refresh(prompt)
-        raise e
+async def _generate_sections(prompt_id: str, service: DeepseekService):
+    """根据prompt_id生成正文（使用独立 DB session，支持并发）"""
+    from app.dependencies import get_async_session_factory
+
+    session_factory = get_async_session_factory()
+    async with session_factory() as db:
+        # 获取 Prompt
+        prompt = await get_prompt_from_db(prompt_id, db)
+        try:
+            prompt_text = prompt.edited_prompt or prompt.original_prompt
+            prompt_str = prompt_text.split("\nUser Input:")
+            system_prompt, user_prompt = prompt_str[0].strip(), prompt_str[1].strip()
+            result = await service.generate_txt_from_prompt(
+                user_prompt=user_prompt,
+                system_prompt=system_prompt,
+                material_type=prompt.material_type,
+            )
+            section_count = await _save_sections_to_db(result, prompt.document_id, db)
+            sections = result.get("data", [])
+            for idx, section_id in enumerate(prompt.source_sections):
+                await db.execute(update(Section).values(
+                    title=sections[idx]["title"],
+                    content=sections[idx]["content"],
+                ).where(Section.id == section_id))
+            # 更新 Prompt 状态
+            prompt.generation_status = "completed"
+            await db.commit()
+            return section_count
+        except Exception as e:
+            prompt.generation_status = "failed"
+            await db.commit()
+            raise e
 
 
 @router.post("/sections/generate", response_model=SectionGenerateResponse)
@@ -534,21 +555,14 @@ async def generate_sections_content(
         raise BadRequestException("prompt_ids is empty")
         
     # 获取 Document
-    document: Document = await get_document(data.document_id, db)
+    document: Document = await get_document_from_db(data.document_id, db)
 
-    # 清空现有 sections 的 content
-    if document.sections:
-        for section in document.sections:
-            if section.get("order_index") in data.section_indices:
-                section["content"] = ""
-        await db.flush()
-
-    # 调用 API
+    # 调用 API（每个任务使用独立 DB session，支持并发）
     service = DeepseekService()
     create_tasks = []
     for prompt_id in data.prompt_ids:
         create_tasks.append(asyncio.create_task(
-            _generate_sections(prompt_id, db, service)))
+            _generate_sections(prompt_id, service)))
     section_counts = await asyncio.gather(*create_tasks)
 
     # 更新 Document 状态

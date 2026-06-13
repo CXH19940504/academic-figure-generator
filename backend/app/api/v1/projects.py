@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.base import get_project
+from app.api.base import get_project_from_db
 from app.dependencies import get_db
 from app.models.document import Document
 from app.models.image import Image
@@ -112,7 +112,7 @@ async def get_project(
     project_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    project = await get_project(project_id, db)
+    project = await get_project_from_db(project_id, db)
     return await _enrich_response(project, db)
 
 
@@ -122,7 +122,7 @@ async def update_project(
     data: ProjectUpdate,
     db: AsyncSession = Depends(get_db),
 ):
-    project = await get_project(project_id, db)
+    project = await get_project_from_db(project_id, db)
     if data.name is not None:
         project.name = data.name
     if data.description is not None:
@@ -139,7 +139,7 @@ async def delete_project(
     project_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    project = await get_project(project_id, db)
+    project = await get_project_from_db(project_id, db)
     project.status = "deleted"
     await db.commit()
     return MessageResponse(message="Project deleted successfully")
