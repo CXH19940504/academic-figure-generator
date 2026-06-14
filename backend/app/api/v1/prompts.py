@@ -171,6 +171,8 @@ async def list_document_prompts(
                 f"Must be one of {[m.value for m in MaterialType]}"
             )
         query = query.where(Prompt.material_type == material_type)
+    else:
+        query = query.where(Prompt.material_type != MaterialType.FIGURE.value)
     
     result = await db.execute(query)
     return [_prompt_to_response(p) for p in result.scalars().all()]

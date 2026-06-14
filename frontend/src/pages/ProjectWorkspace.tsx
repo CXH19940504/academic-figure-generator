@@ -965,7 +965,7 @@ export function ProjectWorkspace() {
                                                                     handleGenerateContent(prompt_id);
                                                                 }}
                                                             >
-                                                                生成
+                                                                生成正文
                                                             </Button>
                                                         </div>
                                                     </div>
@@ -1423,15 +1423,24 @@ export function ProjectWorkspace() {
                                     取消
                                 </Button>
                                 <Button
-                                    onClick={() => {
+                                    onClick={async () => {
                                         if (promptViewer.prompt_id && promptEditContent) {
-                                            // 更新promptPrompts中的内容
-                                            setPromptPrompts(prev => {
-                                                const updated = {...prev} as Record<string, string>;
-                                                updated[promptViewer.prompt_id] = promptEditContent;
-                                                return updated;
-                                            });
-                                            setPromptViewer(prev => ({...prev, content: promptEditContent}));
+                                            try {
+                                                // 调用API更新edited_prompt
+                                                await api.patch(`/prompts/${promptViewer.prompt_id}`, {
+                                                    edited_prompt: promptEditContent
+                                                });
+                                                // 更新本地状态
+                                                setPromptPrompts(prev => {
+                                                    const updated = {...prev} as Record<string, string>;
+                                                    updated[promptViewer.prompt_id] = promptEditContent;
+                                                    return updated;
+                                                });
+                                                setPromptViewer(prev => ({...prev, content: promptEditContent}));
+                                            } catch (err) {
+                                                console.error('Failed to update prompt:', err);
+                                                alert('保存失败，请稍后重试');
+                                            }
                                         }
                                         setPromptEditing(false);
                                         setPromptEditContent('');
