@@ -59,7 +59,6 @@ export function ProjectWorkspace() {
 
     // Generation state
     const [isAutoGenerating, setIsAutoGenerating] = useState(false);
-    const [isGeneratingContent, setIsGeneratingContent] = useState(false);
     const [isDownloading, setIsDownloading] = useState<string | null>(null);
     const [isPreviewing, setIsPreviewing] = useState<Record<string, boolean>>({});
     const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
@@ -68,6 +67,7 @@ export function ProjectWorkspace() {
     const [promptRequest, setPromptRequest] = useState('');
     const [promptPrompts, setPromptPrompts] = useState<Record<string, string>>({});
     const [promptDetails, setPromptDetails] = useState<Record<string, {id: string; title: string; original_prompt: string}>>({});
+    const [generatingPrompts, setGeneratingPrompts] = useState<Record<string, boolean>>({});
     const [templateMode, setTemplateMode] = useState(false);
     const [selectedSectionIndices, setSelectedSectionIndices] = useState<number[]>([]);
     const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
@@ -484,7 +484,13 @@ export function ProjectWorkspace() {
             return;
         }
 
-        setIsGeneratingContent(true);
+        // 如果传入了selectedPromptId，更新generatingPrompts状态
+        if (selectedPromptId) {
+            setGeneratingPrompts(prev => ({...prev, [selectedPromptId]: true}));
+        } else {
+            setIsGeneratingContent(true);
+        }
+
         try {
             let promptIds: string[] = [];
 
@@ -529,7 +535,11 @@ export function ProjectWorkspace() {
             console.error('Failed to generate content', err);
             alert(`生成正文失败：${getApiErrorMessage(err, '请稍后重试。')}`);
         } finally {
-            setIsGeneratingContent(false);
+            if (selectedPromptId) {
+                setGeneratingPrompts(prev => ({...prev, [selectedPromptId]: false}));
+            } else {
+                setIsGeneratingContent(false);
+            }
         }
     };
 
@@ -960,12 +970,17 @@ export function ProjectWorkspace() {
                                                                 variant="default"
                                                                 size="sm"
                                                                 className="h-6 px-2 text-xs"
+                                                                disabled={generatingPrompts[prompt_id]}
                                                                 onClick={(e) => {
                                                                     e.stopPropagation();
                                                                     handleGenerateContent(prompt_id);
                                                                 }}
                                                             >
-                                                                生成正文
+                                                                {generatingPrompts[prompt_id] ? (
+                                                                    <><RefreshCw className="h-3 w-3 mr-1 animate-spin" /> 生成中</>
+                                                                ) : (
+                                                                    '生成正文'
+                                                                )}
                                                             </Button>
                                                         </div>
                                                     </div>
@@ -1097,13 +1112,6 @@ export function ProjectWorkspace() {
                     </div>
                     </CardContent>
                     <CardFooter className="p-4 border-t bg-muted/10 flex gap-2">
-                        <Button className="flex-1 font-semibold" onClick={() => handleGenerateContent()} disabled={isGeneratingContent}>
-                            {isGeneratingContent ? (
-                                <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> 生成正文中...</>
-                            ) : (
-                                <><FileText className="w-4 h-4 mr-2" /> 生成正文</>
-                            )}
-                        </Button>
                         <Button className="flex-1 font-semibold" onClick={handleAutoGenerate} disabled={isAutoGenerating}>
                             {isAutoGenerating ? (
                                 <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> 生成配图中...</>
