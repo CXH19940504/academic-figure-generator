@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { FileUp, FileText, Image as ImageIcon, Send, RefreshCw, Download, ChevronLeft, ChevronRight, ScanText, FileDown, AlertCircle, CheckCircle2, Loader2, Eye, Pencil, Copy, Check } from 'lucide-react';
+import { FileUp, FileText, Image as ImageIcon, Send, RefreshCw, Download, ChevronLeft, ChevronRight, ScanText, FileDown, AlertCircle, CheckCircle2, Loader2, Eye, Copy, Check } from 'lucide-react';
 
 import api from '../lib/api';
 import { useProjectStore } from '../store/projectStore';
@@ -64,8 +64,10 @@ export function ProjectWorkspace() {
     const [isPreviewing, setIsPreviewing] = useState<Record<string, boolean>>({});
     const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
     const previewUrlsRef = useRef<Record<string, string>>({});
-    const [promptMode, setPromptMode] = useState<'overall' | 'sections'>('sections');
+    const promptMode = 'sections';
     const [promptRequest, setPromptRequest] = useState('');
+    const [promptPrompts, setPromptPrompts] = useState<Record<string, string>>({});
+    const [promptDetails, setPromptDetails] = useState<Record<string, {id: string; title: string; original_prompt: string}>>({});
     const [templateMode, setTemplateMode] = useState(false);
     const [selectedSectionIndices, setSelectedSectionIndices] = useState<number[]>([]);
     const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
@@ -74,7 +76,9 @@ export function ProjectWorkspace() {
     const structureInitRef = useRef<string | null>(null);
     const [ocrLoading, setOcrLoading] = useState<Record<string, boolean>>({});
     const [activePreviewIdx, setActivePreviewIdx] = useState<number | null>(null);
-    const [promptViewer, setPromptViewer] = useState<{open: boolean; content: string; title: string}>({open: false, content: '', title: ''});
+    const [promptViewer, setPromptViewer] = useState<{open: boolean; content: string; title: string; prompt_id: string}>({open: false, content: '', title: '', prompt_id: ''});
+    const [promptEditing, setPromptEditing] = useState(false);
+    const [promptEditContent, setPromptEditContent] = useState('');
     const [copiedFeedback, setCopiedFeedback] = useState(false);
     const [copiedSectionFeedback, setCopiedSectionFeedback] = useState(0);
 
@@ -195,7 +199,35 @@ export function ProjectWorkspace() {
         for (const r of roots) next[`sec-${r.idx}`] = true; // default collapsed: only show chapters
         setCollapsedGroups(next);
         structureInitRef.current = parsedDoc.id;
+
+        // 获取prompts信息
+        fetchDocumentPrompts(parsedDoc.id);
     }, [documents]);
+
+    const fetchDocumentPrompts = async (documentId: string) => {
+        if (!id) return;
+        try {
+            const response = await api.get(`/documents/${documentId}/prompts`);
+            const promptsData = response.data || [];
+            // 转换为Record<string, string>格式：{id: original_prompt}
+            const promptsObj: Record<string, string> = {};
+            const detailsObj: Record<string, {id: string; title: string; original_prompt: string}> = {};
+            promptsData.forEach((p: any) => {
+                promptsObj[p.id] = p.original_prompt || '';
+                detailsObj[p.id] = {
+                    id: p.id,
+                    title: p.title || `提示词`,
+                    original_prompt: p.original_prompt || ''
+                };
+            });
+            setPromptPrompts(promptsObj);
+            setPromptDetails(detailsObj);
+        } catch (err) {
+            console.error('Failed to fetch prompts:', err);
+            setPromptPrompts({});
+            setPromptDetails({});
+        }
+    };
 
     useEffect(() => {
         return () => {
@@ -395,9 +427,9 @@ export function ProjectWorkspace() {
             const payload: any = {
                 section_indices: selectedSectionIndices.length ? selectedSectionIndices : null,
                 color_scheme: currentProject?.color_scheme || 'okabe-ito',
-                figure_types: promptMode === 'overall' ? ['overall_framework'] : null,
+                figure_types: null,
                 user_request: templateMode ? null : (promptRequest.trim() ? promptRequest.trim() : null),
-                max_figures: promptMode === 'overall' ? 1 : null,
+                max_figures: null,
                 template_mode: templateMode,
             };
 
@@ -438,7 +470,7 @@ export function ProjectWorkspace() {
     };
 
     /** Generate content for selected sections */
-    const handleGenerateContent = async () => {
+    const handleGenerateContent = async (selectedPromptId?: string) => {
         if (!id) return;
 
         const parsedDoc = documents.find((d) => d.parse_status === 'completed' && Array.isArray(d.sections) && d.sections.length > 0);
@@ -447,26 +479,35 @@ export function ProjectWorkspace() {
             return;
         }
 
-        if (promptMode === 'sections' && selectedSectionIndices.length === 0) {
+        if (promptMode === 'sections' && selectedSectionIndices.length === 0 && !selectedPromptId) {
             alert('请至少选择一个章节。');
             return;
         }
 
         setIsGeneratingContent(true);
         try {
-            // 步骤1: 创建 Prompt
-            const promptResponse = await api.post(`/projects/${id}/sections/prompt`, {
-                document_id: parsedDoc.id,
-                section_indices: selectedSectionIndices.length ? selectedSectionIndices : null,
-            });
+            let promptIds: string[] = [];
 
-            const promptIds = promptResponse.data.prompt_prompts.map((p: any) => p.id) || [];
-            if (promptIds.length === 0) {
-                alert('创建Prompt失败，请稍后重试。');
-                return;
+            // 如果没有传入promptId，则先创建Prompt
+            if (!selectedPromptId) {
+                // 步骤1: 创建 Prompt
+                const promptResponse = await api.post(`/projects/${id}/sections/prompt`, {
+                    document_id: parsedDoc.id,
+                    section_indices: selectedSectionIndices.length ? selectedSectionIndices : null,
+                });
+
+                const promptsObj = promptResponse.data.prompt_prompts || {};
+                promptIds = Object.keys(promptsObj);
+                if (promptIds.length === 0) {
+                    alert('创建Prompt失败，请稍后重试。');
+                    return;
+                }
+                setPromptPrompts(promptsObj);
+                const promptId = promptIds[0];
+                setPromptRequest(promptsObj[promptId] || '');
+            } else {
+                promptIds = [selectedPromptId];
             }
-            const promptId = promptIds[0];
-            setPromptRequest(promptResponse.data.prompt_prompts.find(p => p.id === promptId)?.prompt_request || '');
 
             // 步骤2: 生成正文内容
             const payload: any = {
@@ -879,25 +920,76 @@ export function ProjectWorkspace() {
                     <div className="bg-background">
                         <div className="p-4 border-b">
                             <div className="text-sm font-medium text-muted-foreground mb-2">你想生成什么图？（可选）</div>
-                            <Textarea
-                                value={promptRequest}
-                                onChange={(e) => setPromptRequest(e.target.value)}
-                                placeholder="例如：只生成一张整体架构图（包含输入、编码器、融合模块、输出），突出本文主要贡献点。"
-                                className="min-h-[120px]"
-                                disabled={templateMode}
-                            />
-                            <div className="flex items-center justify-between gap-2 mt-3">
-                                <div className="text-sm font-medium text-muted-foreground">生成方式</div>
-                                <Select value={promptMode} onValueChange={(v) => setPromptMode(v as any)}>
-                                    <SelectTrigger className="w-[180px]">
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="overall">整体架构图（1条）</SelectItem>
-                                        <SelectItem value="sections">按章节生成（多条）</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
+                            {Object.keys(promptPrompts).length === 0 ? (
+                                <div className="text-sm text-muted-foreground py-8 text-center border rounded-md bg-muted/20">
+                                    当前暂无提示词
+                                </div>
+                            ) : (
+                                <div className="space-y-3 max-h-[300px] overflow-y-auto">
+                                    {Object.entries(promptPrompts).map(([prompt_id, prompt_content], index: number) => {
+                                        const detail = promptDetails[prompt_id];
+                                        const title = detail?.title || `提示词 ${index + 1}`;
+                                        return (
+                                            <Card
+                                                key={prompt_id}
+                                                className="cursor-pointer hover:border-primary/50 transition-colors"
+                                            >
+                                                <CardContent className="p-3">
+                                                    <div className="flex items-center justify-between mb-1">
+                                                        <div className="text-xs text-muted-foreground">
+                                                            {title}
+                                                        </div>
+                                                        <div className="flex gap-1">
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                className="h-6 px-2 text-xs"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    setPromptViewer({
+                                                                        open: true,
+                                                                        content: String(prompt_content),
+                                                                        title: title,
+                                                                        prompt_id: prompt_id
+                                                                    });
+                                                                }}
+                                                            >
+                                                                编辑
+                                                            </Button>
+                                                            <Button
+                                                                variant="default"
+                                                                size="sm"
+                                                                className="h-6 px-2 text-xs"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleGenerateContent(prompt_id);
+                                                                }}
+                                                            >
+                                                                生成
+                                                            </Button>
+                                                        </div>
+                                                    </div>
+                                                    <div
+                                                        className="text-sm text-muted-foreground overflow-hidden cursor-pointer hover:bg-muted/30 p-1 rounded"
+                                                        style={{ height: '120px' }}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setPromptViewer({
+                                                                open: true,
+                                                                content: String(prompt_content),
+                                                                title: title,
+                                                                prompt_id: prompt_id
+                                                            });
+                                                        }}
+                                                    >
+                                                        {String(prompt_content)}
+                                                    </div>
+                                                </CardContent>
+                                            </Card>
+                                        );
+                                    })}
+                                </div>
+                            )}
                             <label className="flex items-center gap-2 mt-3 cursor-pointer select-none">
                                 <input
                                     type="checkbox"
@@ -1005,7 +1097,7 @@ export function ProjectWorkspace() {
                     </div>
                     </CardContent>
                     <CardFooter className="p-4 border-t bg-muted/10 flex gap-2">
-                        <Button className="flex-1 font-semibold" onClick={handleGenerateContent} disabled={isGeneratingContent}>
+                        <Button className="flex-1 font-semibold" onClick={() => handleGenerateContent()} disabled={isGeneratingContent}>
                             {isGeneratingContent ? (
                                 <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> 生成正文中...</>
                             ) : (
@@ -1205,7 +1297,7 @@ export function ProjectWorkspace() {
                                                             variant="ghost"
                                                             onClick={() => {
                                                                 const content = latestImg?.final_prompt_sent || prompt.original_prompt || prompt.edited_prompt || '';
-                                                                setPromptViewer({open: true, content, title: prompt.title || `Figure ${prompt.figure_number ?? ''}`});
+                                                                setPromptViewer({open: true, content, title: prompt.title || `Figure ${prompt.figure_number ?? ''}`, prompt_id: ''});
                                                             }}
                                                             title="查看生成 Prompt"
                                                         >
@@ -1267,41 +1359,100 @@ export function ProjectWorkspace() {
         </div>
 
         {/* Prompt Viewer Dialog */}
-        <Dialog open={promptViewer.open} onOpenChange={(open) => { if (!open) { setPromptViewer({open: false, content: '', title: ''}); setCopiedFeedback(false); } }}>
+        <Dialog open={promptViewer.open} onOpenChange={(open) => {
+            if (!open) {
+                setPromptViewer({open: false, content: '', title: '', prompt_id: ''});
+                setPromptEditing(false);
+                setPromptEditContent('');
+                setCopiedFeedback(false);
+            }
+        }}>
             <DialogContent className="max-w-2xl max-h-[85vh]">
                 <DialogHeader>
-                    <DialogTitle>生成图片的 Prompt</DialogTitle>
+                    <DialogTitle>{promptViewer.prompt_id ? '提示词内容' : '生成图片的 Prompt'}</DialogTitle>
                 </DialogHeader>
                 <div className="space-y-3">
                     {promptViewer.title && (
                         <p className="text-sm text-muted-foreground">{promptViewer.title}</p>
                     )}
-                    <div className="relative">
-                        <pre className="whitespace-pre-wrap text-sm bg-muted p-4 pr-14 rounded-md max-h-[55vh] overflow-y-auto text-foreground/85 leading-relaxed">
-                            {promptViewer.content || '暂无 Prompt 内容'}
-                        </pre>
-                        <Button
-                            size="sm"
-                            variant="outline"
-                            className="absolute top-2 right-2"
-                            disabled={!promptViewer.content}
-                            onClick={async () => {
-                                if (!promptViewer.content) return;
-                                try {
-                                    await navigator.clipboard.writeText(promptViewer.content);
-                                    setCopiedFeedback(true);
-                                    setTimeout(() => setCopiedFeedback(false), 2000);
-                                } catch {
-                                    // fallback
-                                }
-                            }}
-                        >
-                            {copiedFeedback ? (
-                                <><Check className="h-3.5 w-3.5 mr-1" /> 已复制</>
-                            ) : (
-                                <><Copy className="h-3.5 w-3.5 mr-1" /> 复制</>
-                            )}
-                        </Button>
+                    {promptEditing ? (
+                        <Textarea
+                            value={promptEditContent}
+                            onChange={(e) => setPromptEditContent(e.target.value)}
+                            className="min-h-[300px] max-h-[55vh]"
+                        />
+                    ) : (
+                        <div className="relative">
+                            <pre className="whitespace-pre-wrap text-sm bg-muted p-4 pr-14 rounded-md max-h-[55vh] overflow-y-auto text-foreground/85 leading-relaxed">
+                                {promptViewer.content || '暂无 Prompt 内容'}
+                            </pre>
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                className="absolute top-2 right-2"
+                                disabled={!promptViewer.content}
+                                onClick={async () => {
+                                    if (!promptViewer.content) return;
+                                    try {
+                                        await navigator.clipboard.writeText(promptViewer.content);
+                                        setCopiedFeedback(true);
+                                        setTimeout(() => setCopiedFeedback(false), 2000);
+                                    } catch {
+                                        // fallback
+                                    }
+                                }}
+                            >
+                                {copiedFeedback ? (
+                                    <><Check className="h-3.5 w-3.5 mr-1" /> 已复制</>
+                                ) : (
+                                    <><Copy className="h-3.5 w-3.5 mr-1" /> 复制</>
+                                )}
+                            </Button>
+                        </div>
+                    )}
+                    <div className="flex gap-2 justify-end">
+                        {promptEditing ? (
+                            <>
+                                <Button
+                                    variant="outline"
+                                    onClick={() => {
+                                        setPromptEditing(false);
+                                        setPromptEditContent('');
+                                    }}
+                                >
+                                    取消
+                                </Button>
+                                <Button
+                                    onClick={() => {
+                                        if (promptViewer.prompt_id && promptEditContent) {
+                                            // 更新promptPrompts中的内容
+                                            setPromptPrompts(prev => {
+                                                const updated = {...prev} as Record<string, string>;
+                                                updated[promptViewer.prompt_id] = promptEditContent;
+                                                return updated;
+                                            });
+                                            setPromptViewer(prev => ({...prev, content: promptEditContent}));
+                                        }
+                                        setPromptEditing(false);
+                                        setPromptEditContent('');
+                                    }}
+                                >
+                                    保存
+                                </Button>
+                            </>
+                        ) : (
+                            promptViewer.prompt_id && (
+                                <Button
+                                    variant="outline"
+                                    onClick={() => {
+                                        setPromptEditing(true);
+                                        setPromptEditContent(promptViewer.content);
+                                    }}
+                                >
+                                    编辑
+                                </Button>
+                            )
+                        )}
                     </div>
                 </div>
             </DialogContent>

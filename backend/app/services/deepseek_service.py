@@ -109,7 +109,7 @@ class DeepseekService:
         Returns
         -------
         dict
-            ``{"sections": list[dict], "duration_ms": int}``
+            ``{"data": list[dict], "duration_ms": int}``
         """
         if model is None:
             model = settings.DEEPSEEK_MODEL
