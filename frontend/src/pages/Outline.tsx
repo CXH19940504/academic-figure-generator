@@ -182,7 +182,11 @@ export function Outline() {
          setLoadingTemplates(true);
          try {
             const response = await api.get('/templates');
-            setTemplates(response.data || []);
+            const templatesData = response.data || [];
+            setTemplates(templatesData);
+            if (templatesData.length > 0 && !selectedTemplate) {
+               setSelectedTemplate(String(templatesData[0].id));
+            }
          } catch {
             setTemplates([]);
          } finally {

@@ -2,6 +2,13 @@ export function getApiErrorMessage(error: any, fallback: string): string {
     const data = error?.response?.data;
     const detail = data?.detail;
 
+    if (data?.error === 'BAD_REQUEST' && typeof detail === 'string') {
+        const match = detail.match(/^(.+?)\s+is required$/);
+        if (match) {
+            return `缺少参数：${match[1]}`;
+        }
+    }
+
     const toText = (value: any): string | null => {
         if (value == null) return null;
         if (typeof value === 'string') return value;

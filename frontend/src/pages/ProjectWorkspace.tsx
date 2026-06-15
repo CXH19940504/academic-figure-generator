@@ -49,6 +49,7 @@ export function ProjectWorkspace() {
     const [isInitialLoading, setIsInitialLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [documents, setDocuments] = useState<DocumentItem[]>([]);
+    const [documentId, setDocumentId] = useState<string | null>(null);
     const [prompts, setPrompts] = useState<any[]>([]);
     const [images, setImages] = useState<any[]>([]);
 
@@ -199,12 +200,13 @@ export function ProjectWorkspace() {
         for (const r of roots) next[`sec-${r.idx}`] = true; // default collapsed: only show chapters
         setCollapsedGroups(next);
         structureInitRef.current = parsedDoc.id;
+        setDocumentId(parsedDoc.id);
 
         // 获取prompts信息
-        fetchDocumentPrompts(parsedDoc.id);
+        fetchDocumentPrompts();
     }, [documents]);
 
-    const fetchDocumentPrompts = async (documentId: string) => {
+    const fetchDocumentPrompts = async () => {
         if (!id) return;
         try {
             const response = await api.get(`/documents/${documentId}/prompts`);
@@ -270,6 +272,7 @@ export function ProjectWorkspace() {
                     (d: any) => d.parse_status === 'completed' && Array.isArray(d.sections) && d.sections.length > 0
                 );
                 if (firstParsed?.sections?.length && selectedSectionIndices.length === 0) {
+                    setDocumentId(firstParsed.id);
                     setSelectedSectionIndices(firstParsed.sections.map((_: any, idx: number) => idx));
                 }
             } catch (e) {
@@ -428,7 +431,6 @@ export function ProjectWorkspace() {
                 section_indices: selectedSectionIndices.length ? selectedSectionIndices : null,
                 color_scheme: currentProject?.color_scheme || 'okabe-ito',
                 figure_types: null,
-                user_request: templateMode ? null : (promptRequest.trim() ? promptRequest.trim() : null),
                 max_figures: null,
                 template_mode: templateMode,
             };
@@ -469,55 +471,61 @@ export function ProjectWorkspace() {
         }
     };
 
-    /** Generate content for selected sections */
-    const handleGenerateContent = async (selectedPromptId?: string) => {
+    /** Generate content using existing prompt */
+    const handleGenerateContent = async (selectedPromptId: string) => {
+        if (!id) return;
+        setGeneratingPrompts(prev => ({...prev, [selectedPromptId]: true}));
+
+        try {
+            const payload: any = {
+                document_id: documentId,
+                prompt_ids: [selectedPromptId],
+            };
+
+            const generateResponse = await api.post(`/sections/generate`, payload);
+            if (generateResponse.data.success !== true) {
+                alert('生成正文失败，请稍后重试。');
+                return;
+            } else {
+                alert(`成功生成 ${generateResponse.data.section_count || 0} 个段落`);
+            }
+
+            await fetchProjectData(id, { showLoader: false });
+        } catch (err: any) {
+            console.error('Failed to generate content', err);
+            alert(`生成正文失败：${getApiErrorMessage(err, '请稍后重试。')}`);
+        } finally {
+            setGeneratingPrompts(prev => ({...prev, [selectedPromptId]: false}));
+        }
+    };
+
+    /** Generate content with creating new prompt first */
+    const handleGenerateContentWithPrompt = async () => {
         if (!id) return;
 
-        const parsedDoc = documents.find((d) => d.parse_status === 'completed' && Array.isArray(d.sections) && d.sections.length > 0);
-        if (!parsedDoc) {
-            alert('请先上传文档并等待解析完成，再生成正文。');
-            return;
-        }
-
-        if (promptMode === 'sections' && selectedSectionIndices.length === 0 && !selectedPromptId) {
+        if (promptMode === 'sections' && selectedSectionIndices.length === 0) {
             alert('请至少选择一个章节。');
             return;
         }
 
-        // 如果传入了selectedPromptId，更新generatingPrompts状态
-        if (selectedPromptId) {
-            setGeneratingPrompts(prev => ({...prev, [selectedPromptId]: true}));
-        } else {
-            setIsGeneratingContent(true);
-        }
-
         try {
-            let promptIds: string[] = [];
+            // 步骤1: 创建 Prompt
+            const promptResponse = await api.post(`/projects/${id}/sections/prompt`, {
+                document_id: documentId,
+                section_indices: selectedSectionIndices.length ? selectedSectionIndices : null,
+            });
 
-            // 如果没有传入promptId，则先创建Prompt
-            if (!selectedPromptId) {
-                // 步骤1: 创建 Prompt
-                const promptResponse = await api.post(`/projects/${id}/sections/prompt`, {
-                    document_id: parsedDoc.id,
-                    section_indices: selectedSectionIndices.length ? selectedSectionIndices : null,
-                });
-
-                const promptsObj = promptResponse.data.prompt_prompts || {};
-                promptIds = Object.keys(promptsObj);
-                if (promptIds.length === 0) {
-                    alert('创建Prompt失败，请稍后重试。');
-                    return;
-                }
-                setPromptPrompts(promptsObj);
-                const promptId = promptIds[0];
-                setPromptRequest(promptsObj[promptId] || '');
-            } else {
-                promptIds = [selectedPromptId];
+            const promptsObj = promptResponse.data.prompt_prompts || {};
+            const promptIds = Object.keys(promptsObj);
+            if (promptIds.length === 0) {
+                alert('创建Prompt失败，请稍后重试。');
+                return;
             }
+            setPromptPrompts(promptsObj);
 
             // 步骤2: 生成正文内容
             const payload: any = {
-                document_id: parsedDoc.id,
+                document_id: documentId,
                 prompt_ids: promptIds,
             };
 
@@ -529,17 +537,10 @@ export function ProjectWorkspace() {
                 alert(`成功生成 ${generateResponse.data.section_count || 0} 个段落`);
             }
 
-            // Refresh to pick up updated sections
             await fetchProjectData(id, { showLoader: false });
         } catch (err: any) {
             console.error('Failed to generate content', err);
             alert(`生成正文失败：${getApiErrorMessage(err, '请稍后重试。')}`);
-        } finally {
-            if (selectedPromptId) {
-                setGeneratingPrompts(prev => ({...prev, [selectedPromptId]: false}));
-            } else {
-                setIsGeneratingContent(false);
-            }
         }
     };
 
@@ -1118,6 +1119,9 @@ export function ProjectWorkspace() {
                             ) : (
                                 <><Send className="w-4 h-4 mr-2" /> 生成配图</>
                             )}
+                        </Button>
+                        <Button className="flex-1 font-semibold bg-white text-black hover:bg-gray-100 border border-gray-200" onClick={handleGenerateContentWithPrompt}>
+                            生成正文
                         </Button>
                     </CardFooter>
                 </Card>
