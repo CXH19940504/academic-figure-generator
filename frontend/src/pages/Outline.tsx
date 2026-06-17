@@ -53,10 +53,12 @@ interface OutlineItem {
 export function Outline() {
    // 项目状态
    const [projectId, setProjectId] = useState<string | null>(null);
-   const [loadingProject, setLoadingProject] = useState(true);
+   const [loadingProject, setLoadingProject] = useState(false);
 
    // 获取直接生成大纲的项目ID
    const fetchProject = async () => {
+      if (loadingProject || projectId) return;
+      setLoadingProject(true);
       try {
             const response = await api.get('/projects/by_name', {
                params: {
@@ -96,11 +98,9 @@ export function Outline() {
    const [documentId, setDocumentId] = useState<string | null>(null);
    const [promptId, setPromptId] = useState<string | null>(null);
 
-   // 首次加载标志符
-   const firstLoadRef = useRef(true);
-
    // 获取项目文档
-   const fetchDocumentId = async (projectId: string) => {
+   const fetchDocumentId = async () => {
+      if (!projectId) return;
       setLoadingDocuments(true);
       try {
          const response = await api.get(`/projects/${projectId}/documents`);
@@ -138,7 +138,8 @@ export function Outline() {
    };
 
    // 获取文档的 prompts
-   const fetchDocumentPrompts = async (documentId: string) => {
+   const fetchDocumentPrompts = async () => {
+      if (!documentId) return;
       try {
          const response = await api.get(`/documents/${documentId}/prompts`, {
             params: {
@@ -148,45 +149,52 @@ export function Outline() {
          const prompts = response.data || [];
          if (prompts.length > 0) {
             const latestPrompt = prompts[0];
-            const promptContent = latestPrompt.edited_prompt || latestPrompt.original_prompt || '';
+            const promptContent = latestPrompt.active_prompt || '';
             setOutlinePrompt(promptContent);
             setPromptId(latestPrompt.id || null);
-            setIsGenerating(latestPrompt.is_generating || false);
+            setIsGenerating(latestPrompt.generate_status === 'generating');
+         } else {
+            setOutlinePrompt('');
+            setPromptId(null);
+            setIsGenerating(false);
          }
       } catch (error) {
          console.error('获取文档 prompts 失败:', error);
       }
    };
 
-   const fetchDocumentSections = async (documentId: string) => {
+   const fetchDocumentSections = async () => {
+      if (!documentId) return;
       try {
          const response = await api.get(`/documents/${documentId}/sections`);
          setOutlineResult(response.data.sections || []);
       } catch (error) {
          console.error('获取文档 sections 失败:', error);
+         setOutlineResult(null);
       }
    };
 
    // 监听 projectId 变化
    useEffect(() => {
-      if (projectId) {
-         fetchDocumentId(projectId);
-      }
+      if (!projectId) return;
+      fetchDocumentId();
+      fetchDocumentPrompts();
    }, [projectId]);
 
-   // 监听 documentId 变化
+   // 监听 promptId 变化
    useEffect(() => {
-      if (documentId) {
-         fetchDocumentPrompts(documentId);
-         fetchDocumentSections(documentId);
+      if (!promptId) return;
+      if (isGenerating === false) {
+         fetchDocumentSections();
+         return;
       }
-   }, [documentId]);
+      const interval = setInterval(() => { fetchDocumentPrompts(); }, 5000);
+      return () => clearInterval(interval);
+   }, [promptId]);
 
    // 加载模板列表
    useEffect(() => {
-      if (!firstLoadRef.current) return;
-      firstLoadRef.current = false;
-
+      if (!projectId) return;
       fetchProject();
 
       const loadTemplates = async () => {
@@ -237,9 +245,13 @@ export function Outline() {
          });
          // 如果是直接生成模式，且返回了 document_id，更新 documentId
          // 否则，仍然显示旧的大纲
-         if (!documentId && response.data.document_id) {
+         if (response.data.document_id !== documentId) {
             setDocumentId(response.data.document_id);
+            setPromptId(response.data.prompt_id);
+         } else {
+            fetchDocumentSections();
          }
+
       } catch (e: any) {
          console.error(e);
          const msg = getApiErrorMessage(e, '请求失败，请检查网络连接');
@@ -284,8 +296,9 @@ export function Outline() {
          const { prompt_id, system_prompt, document_id } = promptResponse.data;
          
          // 将 system_prompt 渲染到 outlinePrompt
+         setOutlinePrompt(system_prompt);
+         setPromptId(prompt_id);
          setDocumentId(document_id);
-         setOutlinePrompt(system_prompt || '');
          setIsGenerating(true);
 
          // 第二步：使用 prompt_id 生成大纲

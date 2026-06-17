@@ -106,6 +106,16 @@ async def upload_document(
         document.parse_error = str(exc)
         logger.error("Document %s parsing failed: %s", document.id, exc)
 
+    prompt = Prompt(
+        project_id=project_id,
+        document_id=document.id,
+        figure_number=0,
+        original_prompt="parsed from file",
+        title=document.title,
+        material_type=MaterialType.OUTLINE.value,
+        generation_status="completed",
+    )
+    db.add(prompt)
     await db.flush()
     await db.refresh(document)
 
@@ -214,8 +224,12 @@ async def create_outline_prompt(
         raise BadRequestException("template_id is required")
     template_content = template.content
 
-    # 3.创建文档
+    # 3.获取或创建文档
     document = Document(uuid="", storage_path="")
+    if data.document_id:
+        section_count = (await db.execute(select(func.count()).select_from(Section).where(Section.document_id == data.document_id))).scalar_one()
+        if section_count is not None and section_count > 0:
+            document = await get_document_from_db(data.document_id, db)
     document.project_id = project_id
     document.title = data.title
     document.paper_type = data.paper_type
@@ -225,8 +239,9 @@ async def create_outline_prompt(
     document.file_type = template.storage_path.split(".")[-1]
     document.file_size_bytes = data.word_count
     document.parse_status = "generating"
-    db.add(document)
-    await db.flush()
+    if not document.id:
+        db.add(document)
+        await db.flush()
     await db.refresh(document)
     document_id = document.id
 
@@ -241,7 +256,7 @@ async def create_outline_prompt(
     system_prompt = _build_system_prompt(MaterialType.OUTLINE.name, params)
 
     # 5. 获取或创建 Prompt
-    if data.prompt_id is not None:
+    if data.prompt_id:
         prompt = await get_prompt_from_db(data.prompt_id, db)
     else:
         prompt = Prompt(
@@ -314,8 +329,10 @@ async def generate_outline_by_prompt(
         )
         section_count = await _save_sections_to_db(result, document_id, db)
         # 更新 Document 状态
+        prompt.generation_status = "completed"
         document.parse_status = "completed"
         await db.flush()
+        await db.refresh(prompt)
         await db.refresh(document)
 
         return OutlineGenerateResponse(
@@ -327,8 +344,10 @@ async def generate_outline_by_prompt(
             duration_ms=result.get("duration_ms", 0),
         )
     except Exception as e:
+        prompt.generation_status = "failed"
         document.parse_status = "failed"
         await db.flush()
+        await db.refresh(prompt)
         await db.refresh(document)
         raise e
 
@@ -344,7 +363,8 @@ async def generate_outline_direct(
     # 1. 获取或创建项目
     project = await get_project_or_create_from_db(data.project_id, db, "直接生成大纲") 
     project_id = project.id
-    # 2. 创建文档
+
+    # 2.获取或创建文档
     document = Document(
         uuid="",
         original_filename="",
@@ -352,8 +372,13 @@ async def generate_outline_direct(
         file_size_bytes=0,
         storage_path=""
     )
-    db.add(document)
-    await db.flush()
+    if data.document_id:
+        section_count = (await db.execute(select(func.count()).select_from(Section).where(Section.document_id == data.document_id))).scalar_one()
+        if section_count is not None and section_count > 0:
+            document = await get_document_from_db(data.document_id, db)
+    if document.id is None:
+        db.add(document)
+        await db.flush()
 
     document.project_id = project_id
     document.title = data.title
@@ -361,15 +386,19 @@ async def generate_outline_direct(
     await db.refresh(document)
     document_id = document.id
 
-    # 3. 创建 Prompt
-    prompt = Prompt(
-        project_id=project_id,
-        document_id=document_id,
-        figure_number=0,
-        original_prompt="",
-    )
-    db.add(prompt)
-    await db.flush()
+    # 3. 获取或创建 Prompt
+    if data.prompt_id:
+        prompt = await get_prompt_from_db(data.prompt_id, db)
+    else:
+        prompt = Prompt(
+            project_id=project_id,
+            document_id=document_id,
+            figure_number=0,
+            original_prompt="",
+        )
+        db.add(prompt)
+        await db.flush()
+
     prompt.title = data.title
     prompt.material_type = MaterialType.OUTLINE.value
     prompt.edited_prompt = data.outline_prompt
@@ -385,8 +414,10 @@ async def generate_outline_direct(
             material_type=MaterialType.OUTLINE,
         )
         section_count = await _save_sections_to_db(result, document_id, db)
+        prompt.generation_status = "completed"
         document.parse_status = "completed"
         await db.flush()
+        await db.refresh(prompt)
         await db.refresh(document)
         
         return OutlineGenerateResponse(
@@ -398,8 +429,10 @@ async def generate_outline_direct(
             duration_ms=result.get("duration_ms", 0),
         )
     except Exception as e:
+        prompt.generation_status = "failed"
         document.parse_status = "failed"
         await db.flush()
+        await db.refresh(prompt)
         await db.refresh(document)
         raise e
 
