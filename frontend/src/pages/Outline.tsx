@@ -192,10 +192,14 @@ export function Outline() {
       return () => clearInterval(interval);
    }, [promptId]);
 
-   // 加载模板列表
+   // 挂载时获取项目ID
+   useEffect(() => {
+      fetchProject();
+   }, []);
+
+   // 项目ID就绪后加载模板列表
    useEffect(() => {
       if (!projectId) return;
-      fetchProject();
 
       const loadTemplates = async () => {
          setLoadingTemplates(true);
@@ -213,7 +217,7 @@ export function Outline() {
          }
       };
       loadTemplates();
-   }, []);
+   }, [projectId]);
 
    // 学历变更时更新默认字数
    const handleDegreeChange = (newDegree: string) => {

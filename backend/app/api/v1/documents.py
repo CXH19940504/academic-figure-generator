@@ -270,7 +270,7 @@ async def create_outline_prompt(
     prompt.title = data.title
     prompt.material_type = MaterialType.OUTLINE.value
     prompt.edited_prompt = system_prompt
-    await db.refresh(prompt)
+    await db.flush()
 
     return OutlinePromptResponse(
         success=True,
