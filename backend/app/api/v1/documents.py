@@ -4,9 +4,8 @@ import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, UploadFile
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.api.base import get_document_from_db, get_project_from_db, get_project_or_create_from_db, get_prompt_from_db, get_template_from_db
 from app.core.exceptions import BadRequestException, NotFoundException
@@ -15,11 +14,10 @@ from app.models.document import Document, Section
 from app.models.prompt import Prompt
 from app.schemas import get_subject_name_by_code
 from app.schemas.common import MaterialType, PaperType
-from app.models.project import Project, Template
 from app.schemas.document import (
     DocumentCreate, DocumentResponse, OutlineGenerateRequest, OutlineGenerateResponse,
     OutlinePromptCreateRequest, OutlinePromptResponse, SectionGenerateRequest, SectionGenerateResponse,
-    SectionPromptRequest, SectionPromptResponse
+    SectionPromptRequest, SectionPromptResponse, SectionsResponse
 )
 from app.services.local_storage_service import LocalStorageService
 from app.services.deepseek_service import DeepseekService
@@ -39,7 +37,6 @@ async def list_project_documents(
         select(Document)
         .where(Document.project_id == project_id)
         .order_by(Document.created_at.desc())
-        .options(selectinload(Document.sections))
     )
     return [DocumentResponse.model_validate(d) for d in result.scalars().all()]
 
@@ -123,12 +120,26 @@ async def get_document(
     result = await db.execute(
         select(Document)
         .where(Document.id == document_id)
-        .options(selectinload(Document.sections))
     )
     document: Document | None = result.scalar_one_or_none()
     if document is None:
         raise NotFoundException("Document not found")
     return DocumentResponse.model_validate(document)
+
+
+@router.get("/documents/{document_id}/sections", response_model=SectionsResponse)
+async def get_document_sections(
+    document_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Section)
+        .where(Section.document_id == document_id)
+        .order_by(Section.order_index.asc())
+    )
+    sections: list[Section] = result.scalars().all()
+    return SectionsResponse(document_id=document_id, sections=sections)
+
 
 
 def _build_system_prompt(skill_name: str, params: dict) -> str:
@@ -203,13 +214,8 @@ async def create_outline_prompt(
         raise BadRequestException("template_id is required")
     template_content = template.content
 
-    # 3.获取或创建文档
-    if data.document_id is not None:
-        document = await get_document_from_db(data.document_id, db)
-    else:
-        # 创建 Document
-        document = Document(uuid="", storage_path="")
-    
+    # 3.创建文档
+    document = Document(uuid="", storage_path="")
     document.project_id = project_id
     document.title = data.title
     document.paper_type = data.paper_type
@@ -219,9 +225,8 @@ async def create_outline_prompt(
     document.file_type = template.storage_path.split(".")[-1]
     document.file_size_bytes = data.word_count
     document.parse_status = "generating"
-    if data.document_id is None:
-        db.add(document)
-        await db.flush()
+    db.add(document)
+    await db.flush()
     await db.refresh(document)
     document_id = document.id
 
@@ -241,12 +246,12 @@ async def create_outline_prompt(
     else:
         prompt = Prompt(
             project_id=project_id,
-            document_id=document_id,
             figure_number=0,
             original_prompt=system_prompt,
         )
         db.add(prompt)
         await db.flush()
+    prompt.document_id = document_id
     prompt.title = data.title
     prompt.material_type = MaterialType.OUTLINE.value
     prompt.edited_prompt = system_prompt
@@ -339,20 +344,16 @@ async def generate_outline_direct(
     # 1. 获取或创建项目
     project = await get_project_or_create_from_db(data.project_id, db, "直接生成大纲") 
     project_id = project.id
-    # 2.获取或创建文档
-    if data.document_id is not None:
-        document = await get_document_from_db(data.document_id, db)
-    else:
-        # 创建 Document
-        document = Document(
-            uuid="",
-            original_filename="",
-            file_type="",
-            file_size_bytes=0,
-            storage_path=""
-        )
-        db.add(document)
-        await db.flush()
+    # 2. 创建文档
+    document = Document(
+        uuid="",
+        original_filename="",
+        file_type="",
+        file_size_bytes=0,
+        storage_path=""
+    )
+    db.add(document)
+    await db.flush()
 
     document.project_id = project_id
     document.title = data.title
@@ -360,18 +361,15 @@ async def generate_outline_direct(
     await db.refresh(document)
     document_id = document.id
 
-    # 3. 获取或创建 Prompt
-    if data.prompt_id is not None:
-        prompt = await get_prompt_from_db(data.prompt_id, db)
-    else:
-        prompt = Prompt(
-            project_id=project_id,
-            document_id=document_id,
-            figure_number=0,
-            original_prompt="",
-        )
-        db.add(prompt)
-        await db.flush()
+    # 3. 创建 Prompt
+    prompt = Prompt(
+        project_id=project_id,
+        document_id=document_id,
+        figure_number=0,
+        original_prompt="",
+    )
+    db.add(prompt)
+    await db.flush()
     prompt.title = data.title
     prompt.material_type = MaterialType.OUTLINE.value
     prompt.edited_prompt = data.outline_prompt
@@ -453,11 +451,19 @@ async def create_sections_prompt(
                 len(update_paragraphs), len(data.section_indices))
 
     # 4. 构建 prompt
+    exist_cnt_result = await db.execute(
+        select(func.count())
+        .select_from(Prompt)
+        .where(
+            Prompt.document_id == document.id,
+            Prompt.material_type != MaterialType.FIGURE.value,
+        )
+    )
+    exist_cnt = exist_cnt_result.scalar_one()
     prompt_prompts = {}
     params = {
         "major_name": get_subject_name_by_code(document.subject_code or "08")
     }
-    logger.info("create_sections_prompt: params=%s", params)
     for i, paragraph in enumerate(update_paragraphs):
         try:
             material_type = MaterialType[paragraph[0].material_type]
@@ -476,7 +482,7 @@ async def create_sections_prompt(
             material_type=material_type.value,
             project_id=project_id,
             document_id=document.id,
-            figure_number=0,
+            figure_number=exist_cnt+i,
             original_prompt=system_prompt+"\nUser Input:"+user_prompt,
             edited_prompt="",
             generation_status="pending",

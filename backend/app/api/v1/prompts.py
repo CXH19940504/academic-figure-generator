@@ -4,7 +4,7 @@ import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -162,7 +162,7 @@ async def list_document_prompts(
     material_type: int | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(Prompt).where(Prompt.document_id == document_id)
+    _filters = [Prompt.document_id == document_id]
     
     if material_type is not None:
         if material_type not in {m.value for m in MaterialType}:
@@ -170,11 +170,18 @@ async def list_document_prompts(
                 f"Invalid material_type: {material_type}. "
                 f"Must be one of {[m.value for m in MaterialType]}"
             )
-        query = query.where(Prompt.material_type == material_type)
+        _filters.append(Prompt.material_type == material_type)
     else:
-        query = query.where(Prompt.material_type != MaterialType.FIGURE.value)
-    
-    result = await db.execute(query)
+        _filters.append(Prompt.material_type != MaterialType.FIGURE.value)
+    await db.execute(update(Prompt).where(
+        Prompt.generation_status == "pending",
+        Prompt.updated_at < datetime.now() - timedelta(minutes=10),
+         *_filters
+    ).values(
+        generation_status="failed", 
+        updated_at=datetime.now(),
+    ))
+    result = await db.execute(select(Prompt).where(*_filters).order_by(Prompt.figure_number.desc()))
     return [_prompt_to_response(p) for p in result.scalars().all()]
 
 

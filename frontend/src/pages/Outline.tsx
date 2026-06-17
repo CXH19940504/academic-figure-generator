@@ -127,14 +127,7 @@ export function Outline() {
                if (docResponse.data.template_id) {
                   setSelectedTemplate(docResponse.data.template_id);
                }
-               if (docResponse.data.sections) {
-                  setOutlineResult(docResponse.data.sections);
-               }
             } 
-            // 使用局部变量 firstDoc.id 而不是状态值
-            if (firstDoc.id) {
-               fetchDocumentPrompts(firstDoc.id);
-            }
          }
       } catch (error) {
          console.error('获取文档列表失败:', error);
@@ -158,9 +151,19 @@ export function Outline() {
             const promptContent = latestPrompt.edited_prompt || latestPrompt.original_prompt || '';
             setOutlinePrompt(promptContent);
             setPromptId(latestPrompt.id || null);
+            setIsGenerating(latestPrompt.is_generating || false);
          }
       } catch (error) {
          console.error('获取文档 prompts 失败:', error);
+      }
+   };
+
+   const fetchDocumentSections = async (documentId: string) => {
+      try {
+         const response = await api.get(`/documents/${documentId}/sections`);
+         setOutlineResult(response.data.sections || []);
+      } catch (error) {
+         console.error('获取文档 sections 失败:', error);
       }
    };
 
@@ -170,6 +173,14 @@ export function Outline() {
          fetchDocumentId(projectId);
       }
    }, [projectId]);
+
+   // 监听 documentId 变化
+   useEffect(() => {
+      if (documentId) {
+         fetchDocumentPrompts(documentId);
+         fetchDocumentSections(documentId);
+      }
+   }, [documentId]);
 
    // 加载模板列表
    useEffect(() => {
@@ -224,13 +235,10 @@ export function Outline() {
             title,
             outline_prompt: outlinePrompt,
          });
-
-         if (response.data.document_id) {
-            const docResponse = await api.get(`/documents/${response.data.document_id}`);
-            setOutlineResult(docResponse.data.sections || []);
+         // 如果是直接生成模式，且返回了 document_id，更新 documentId
+         // 否则，仍然显示旧的大纲
+         if (!documentId && response.data.document_id) {
             setDocumentId(response.data.document_id);
-         } else {
-            setOutlineResult(response.data.sections || []);
          }
       } catch (e: any) {
          console.error(e);
@@ -256,7 +264,6 @@ export function Outline() {
          return;
       }
 
-      setIsGenerating(true);
       setOutlineResult(null);
       setError(null);
 
@@ -279,6 +286,7 @@ export function Outline() {
          // 将 system_prompt 渲染到 outlinePrompt
          setDocumentId(document_id);
          setOutlinePrompt(system_prompt || '');
+         setIsGenerating(true);
 
          // 第二步：使用 prompt_id 生成大纲
          const generateResponse = await api.post(`/outline/${prompt_id}/generate`);

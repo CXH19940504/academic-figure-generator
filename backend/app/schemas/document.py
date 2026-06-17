@@ -32,6 +32,14 @@ class SectionInfo(BaseModel):
     insert_code: Optional[str] = None
 
 
+class SectionsResponse(BaseModel):
+    """Sections schema for API responses."""
+    model_config = ConfigDict(from_attributes=True)
+
+    document_id: str
+    sections: List[SectionInfo] = []
+
+
 class DocumentResponse(BaseModel):
     """Document schema for API responses."""
     model_config = ConfigDict(from_attributes=True)
@@ -47,7 +55,6 @@ class DocumentResponse(BaseModel):
     file_type: str
     file_size_bytes: int
     page_count: Optional[int] = None
-    sections: List[SectionInfo] = []
     parse_status: str
     parse_error: Optional[str] = None
     created_at: datetime

@@ -15,8 +15,19 @@ import { Textarea } from '../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 
+type SectionItem = {
+    id: string;
+    title?: string;
+    content?: string;
+    text?: string;
+    level?: number;
+    page_start?: number | null;
+    page_end?: number | null;
+};
+
 type DocumentItem = {
     id: string;
+    title: string;
     original_filename: string;
     file_type: string;
     file_size_bytes: number;
@@ -24,14 +35,6 @@ type DocumentItem = {
     parse_status: 'pending' | 'parsing' | 'completed' | 'failed' | string;
     parse_error?: string | null;
     ocr_markdown?: string | null;
-    sections?: Array<{
-        title?: string;
-        content?: string;
-        text?: string;
-        level?: number;
-        page_start?: number | null;
-        page_end?: number | null;
-    }> | null;
     created_at?: string;
 };
 
@@ -50,6 +53,7 @@ export function ProjectWorkspace() {
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [documents, setDocuments] = useState<DocumentItem[]>([]);
     const [documentId, setDocumentId] = useState<string | null>(null);
+    const [sections, setSections] = useState<SectionItem[]>([]);
     const [prompts, setPrompts] = useState<any[]>([]);
     const [images, setImages] = useState<any[]>([]);
 
@@ -65,9 +69,7 @@ export function ProjectWorkspace() {
     const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
     const previewUrlsRef = useRef<Record<string, string>>({});
     const promptMode = 'sections';
-    const [promptRequest, setPromptRequest] = useState('');
-    const [promptPrompts, setPromptPrompts] = useState<Record<string, string>>({});
-    const [promptDetails, setPromptDetails] = useState<Record<string, {id: string; title: string; original_prompt: string}>>({});
+    const [promptDetails, setPromptDetails] = useState<Record<string, {id: string; title: string; active_prompt: string}>>({});
     const [generatingPrompts, setGeneratingPrompts] = useState<Record<string, boolean>>({});
     const [templateMode, setTemplateMode] = useState(false);
     const [selectedSectionIndices, setSelectedSectionIndices] = useState<number[]>([]);
@@ -75,7 +77,6 @@ export function ProjectWorkspace() {
     const [showStructure, setShowStructure] = useState(true);
     const [showDocs, setShowDocs] = useState(true);
     const structureInitRef = useRef<string | null>(null);
-    const [ocrLoading, setOcrLoading] = useState<Record<string, boolean>>({});
     const [activePreviewIdx, setActivePreviewIdx] = useState<number | null>(null);
     const [promptViewer, setPromptViewer] = useState<{open: boolean; content: string; title: string; prompt_id: string}>({open: false, content: '', title: '', prompt_id: ''});
     const [promptEditing, setPromptEditing] = useState(false);
@@ -189,45 +190,94 @@ export function ProjectWorkspace() {
     }, [id]);
 
     useEffect(() => {
-        const parsedDoc = documents.find(
-            (d) => d.parse_status === 'completed' && Array.isArray(d.sections) && d.sections.length > 0
-        );
-        if (!parsedDoc?.id || !Array.isArray(parsedDoc.sections) || parsedDoc.sections.length === 0) return;
-        if (structureInitRef.current === parsedDoc.id) return;
+        if (!documentId) return;
+        const parsedDoc = documents.find(doc => doc.id === documentId);
+        if (!parsedDoc) return;
+        fetchDocumentPrompts();
+        fetchSections();
+        fetchImagesPrompts();
+    }, [documentId]);
 
-        const roots = buildSectionTree(parsedDoc.sections);
+    useEffect(() => {
+        if (!documentId) return;
+        // sections是空的无需渲染
+        if (!Array.isArray(sections) || sections.length === 0) return;
+        // 已经初始化过，无需重新渲染
+        if (structureInitRef.current === documentId) return;
+        const roots = buildSectionTree(sections);
         const next: Record<string, boolean> = {};
         for (const r of roots) next[`sec-${r.idx}`] = true; // default collapsed: only show chapters
         setCollapsedGroups(next);
-        structureInitRef.current = parsedDoc.id;
-        setDocumentId(parsedDoc.id);
-
-        // 获取prompts信息
-        fetchDocumentPrompts();
-    }, [documents]);
-
+        structureInitRef.current = documentId;
+        return () => setSections([]);
+    }, [sections, documentId]);
+    
     const fetchDocumentPrompts = async () => {
-        if (!id) return;
+        if (!id || !documentId) return;
         try {
             const response = await api.get(`/documents/${documentId}/prompts`);
             const promptsData = response.data || [];
-            // 转换为Record<string, string>格式：{id: original_prompt}
-            const promptsObj: Record<string, string> = {};
-            const detailsObj: Record<string, {id: string; title: string; original_prompt: string}> = {};
+            const detailsObj: Record<string, {id: string; title: string; active_prompt: string}> = {};
+            const isGenerating: Record<string, boolean> = {};
             promptsData.forEach((p: any) => {
-                promptsObj[p.id] = p.original_prompt || '';
                 detailsObj[p.id] = {
                     id: p.id,
                     title: p.title || `提示词`,
-                    original_prompt: p.original_prompt || ''
+                    active_prompt: p.active_prompt || ''
                 };
+                isGenerating[p.id] = (p.generation_status === 'pending');
             });
-            setPromptPrompts(promptsObj);
             setPromptDetails(detailsObj);
+            setGeneratingPrompts(isGenerating);
         } catch (err) {
             console.error('Failed to fetch prompts:', err);
-            setPromptPrompts({});
             setPromptDetails({});
+            setGeneratingPrompts({});
+        }
+    };
+
+    const fetchSections = async () => {
+        if (!id || !documentId) return;
+        try {
+            const response = await api.get(`/documents/${documentId}/sections`);
+            const sectionsData = response.data || [];
+            setSections(sectionsData);
+        } catch (err) {
+            console.error('Failed to fetch sections:', err);
+            setSections([]);
+        }
+    };
+
+    const fetchImagesPrompts = async () => {
+        if (!id || !documentId) return;
+        
+        // Poll until new prompts appear
+        const beforeCount = prompts.length;
+        let newPrompts: any[] = [];
+        const deadline = Date.now() + 90_000;
+        while (Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, 2000));
+            const promptsRes = await api.get(`/documents/${documentId}/prompts`, {
+                params: {
+                    material_type: 6,
+                },
+            });
+            const next = promptsRes.data || [];
+            setPrompts(next);
+            if (next.length > beforeCount) {
+                newPrompts = next.slice(beforeCount);
+                break;
+            }
+        }
+
+        // Initialize per-prompt default settings so selectors have values
+        for (const prompt of newPrompts) {
+            const aspectRatio = prompt.suggested_aspect_ratio || '16:9';
+            const cs = currentProject?.color_scheme || 'okabe-ito';
+            setPromptSettings(prev => ({
+                ...prev,
+                [prompt.id]: { resolution: '2K', aspectRatio, colorScheme: cs },
+            }));
         }
     };
 
@@ -250,57 +300,72 @@ export function ProjectWorkspace() {
 
     // Poll while any document is still parsing (including OCR)
     useEffect(() => {
-        const hasParsing = documents.some(d => d.parse_status === 'parsing' || d.parse_status === 'pending');
-        if (!hasParsing || !id) return;
-        const interval = setInterval(() => { fetchProjectData(id, { showLoader: false }); }, 4000);
+        if (!id || !documentId) return;
+        const hasParsing = Object.values(generatingPrompts).some(pid => pid === true);
+        if (!hasParsing) return;
+        const interval = setInterval(() => { fetchDocumentPrompts(); }, 4000);
         return () => clearInterval(interval);
-    }, [documents, id]);
+    }, [generatingPrompts, id]);
+
+    const fetchDocumentsData = async () => {
+        if (!id) return;
+        try {
+            const docsRes = await api.get(`/projects/${id}/documents`);
+            const nextDocs = docsRes.data || [];
+            setDocuments(nextDocs);
+        } catch (e) {
+            console.debug('Failed to fetch documents', e);
+            setDocuments([]);
+        }
+    };
 
     const fetchProjectData = async (projectId: string, opts?: { showLoader?: boolean }) => {
         const showLoader = opts?.showLoader ?? false;
         if (showLoader) setIsInitialLoading(true);
         else setIsRefreshing(true);
         try {
-            const projRes = await api.get(`/projects/${projectId}`);
-            setCurrentProject(projRes.data);
-
-            try {
-                const docsRes = await api.get(`/projects/${projectId}/documents`);
-                const nextDocs = docsRes.data || [];
-                setDocuments(nextDocs);
-                const firstParsed = nextDocs.find(
-                    (d: any) => d.parse_status === 'completed' && Array.isArray(d.sections) && d.sections.length > 0
-                );
-                if (firstParsed?.sections?.length && selectedSectionIndices.length === 0) {
-                    setDocumentId(firstParsed.id);
-                    setSelectedSectionIndices(firstParsed.sections.map((_: any, idx: number) => idx));
+            if (!currentProject) {
+                const projRes = await api.get(`/projects/${projectId}`);
+                setCurrentProject(projRes.data);
+            }
+            
+            if (!documentId) {
+                // 获取 文档列表信息
+                try {
+                    await fetchDocumentsData();
+                    // 刷新时，不改变documentId，只刷新documents信息
+                    const firstParsed = documents.find(
+                        (d: any) => d.parse_status === 'completed' && Array.isArray(d.sections) && d.sections.length > 0
+                    );
+                    if (firstParsed?.id) 
+                    {
+                        setDocumentId(firstParsed.id);
+                        if (sections.length && selectedSectionIndices.length === 0) {
+                            setSelectedSectionIndices(sections.map((_: any, idx: number) => idx));
+                        }
+                    }
+                } catch (e) {
+                    console.debug('Failed to fetch documents', e);
+                    setDocuments([]);
                 }
-            } catch (e) {
-                console.debug('Failed to fetch documents', e);
-                setDocuments([]);
             }
-
-            try {
-                const promptsRes = await api.get(`/projects/${projectId}/prompts`);
-                setPrompts(promptsRes.data);
-            } catch (e) {
-                console.debug('Failed to fetch prompts', e);
-            }
-
+            
+            // 刷新图片列表
             try {
                 const imagesRes = await api.get(`/projects/${projectId}/images`);
                 setImages(imagesRes.data);
             } catch (e) {
                 console.debug('Failed to fetch images', e);
             }
-
-            try {
-                const schemesRes = await api.get('/color-schemes/');
-                setColorSchemes(schemesRes.data || []);
-            } catch (e) {
-                console.debug('Failed to fetch color schemes', e);
+            // 初始化颜色方案
+            if (colorSchemes.length === 0) {
+                try {
+                    const schemesRes = await api.get('/color-schemes/');
+                    setColorSchemes(schemesRes.data || []);
+                } catch (e) {
+                    console.debug('Failed to fetch color schemes', e);
+                }
             }
-
 
         } catch (err) {
             console.error(err);
@@ -362,39 +427,6 @@ export function ProjectWorkspace() {
         }
     };
 
-    const handleTriggerOcr = async (doc: DocumentItem) => {
-        if (!id || ocrLoading[doc.id]) return;
-        setOcrLoading(prev => ({ ...prev, [doc.id]: true }));
-        try {
-            await api.post(`/projects/${id}/documents/${doc.id}/ocr`);
-            // Poll until parse_status changes from 'parsing'
-            const deadline = Date.now() + 300_000;
-            while (Date.now() < deadline) {
-                await new Promise(r => setTimeout(r, 3000));
-                const docsRes = await api.get(`/projects/${id}/documents`);
-                const updated = (docsRes.data || []).find((d: DocumentItem) => d.id === doc.id);
-                setDocuments(docsRes.data || []);
-                if (updated && updated.parse_status !== 'parsing') break;
-            }
-            await fetchProjectData(id, { showLoader: false });
-        } catch (err: any) {
-            alert(`OCR 解析触发失败：${getApiErrorMessage(err, '请检查 PaddleOCR 配置。')}`);
-        } finally {
-            setOcrLoading(prev => ({ ...prev, [doc.id]: false }));
-        }
-    };
-
-    const handleDownloadMarkdown = (doc: DocumentItem) => {
-        if (!doc.ocr_markdown) return;
-        const blob = new Blob([doc.ocr_markdown], { type: 'text/markdown;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = doc.original_filename.replace(/\.[^/.]+$/, '') + '_ocr.md';
-        a.click();
-        URL.revokeObjectURL(url);
-    };
-
     const handleDownloadImage = async (imageId: string) => {
         try {
             setIsDownloading(imageId);
@@ -426,7 +458,6 @@ export function ProjectWorkspace() {
 
         setIsAutoGenerating(true);
         try {
-            const beforeCount = prompts.length;
             const payload: any = {
                 section_indices: selectedSectionIndices.length ? selectedSectionIndices : null,
                 color_scheme: currentProject?.color_scheme || 'okabe-ito',
@@ -437,29 +468,8 @@ export function ProjectWorkspace() {
 
             await api.post(`/projects/${id}/prompts/generate`, payload);
 
-            // Poll until new prompts appear
-            let newPrompts: any[] = [];
-            const deadline = Date.now() + 90_000;
-            while (Date.now() < deadline) {
-                await new Promise((r) => setTimeout(r, 2000));
-                const promptsRes = await api.get(`/projects/${id}/prompts`);
-                const next = promptsRes.data || [];
-                setPrompts(next);
-                if (next.length > beforeCount) {
-                    newPrompts = next.slice(beforeCount);
-                    break;
-                }
-            }
-
-            // Initialize per-prompt default settings so selectors have values
-            for (const prompt of newPrompts) {
-                const aspectRatio = prompt.suggested_aspect_ratio || '16:9';
-                const cs = currentProject?.color_scheme || 'okabe-ito';
-                setPromptSettings(prev => ({
-                    ...prev,
-                    [prompt.id]: { resolution: '2K', aspectRatio, colorScheme: cs },
-                }));
-            }
+            // 更新图片生成的prompts
+            await fetchImagesPrompts();
 
             // Refresh to pick up image records
             await fetchProjectData(id, { showLoader: false });
@@ -473,7 +483,7 @@ export function ProjectWorkspace() {
 
     /** Generate content using existing prompt */
     const handleGenerateContent = async (selectedPromptId: string) => {
-        if (!id) return;
+        if (!id || !documentId) return;
         setGeneratingPrompts(prev => ({...prev, [selectedPromptId]: true}));
 
         try {
@@ -488,9 +498,10 @@ export function ProjectWorkspace() {
                 return;
             } else {
                 alert(`成功生成 ${generateResponse.data.section_count || 0} 个段落`);
+                // 刷新section数据
+                await fetchSections();
             }
 
-            await fetchProjectData(id, { showLoader: false });
         } catch (err: any) {
             console.error('Failed to generate content', err);
             alert(`生成正文失败：${getApiErrorMessage(err, '请稍后重试。')}`);
@@ -514,16 +525,14 @@ export function ProjectWorkspace() {
                 document_id: documentId,
                 section_indices: selectedSectionIndices.length ? selectedSectionIndices : null,
             });
-
-            const promptsObj = promptResponse.data.prompt_prompts || {};
-            const promptIds = Object.keys(promptsObj);
-            if (promptIds.length === 0) {
+            if (promptResponse.data.success !== true) {
                 alert('创建Prompt失败，请稍后重试。');
                 return;
             }
-            setPromptPrompts(promptsObj);
-
+            
             // 步骤2: 生成正文内容
+            setGeneratingPrompts(prev => ({...prev, [promptResponse.data.data.prompt_prompts[0].id]: true}));
+            const promptIds = promptResponse.data.prompt_prompts.map((p: any) => p.id);
             const payload: any = {
                 document_id: documentId,
                 prompt_ids: promptIds,
@@ -535,9 +544,8 @@ export function ProjectWorkspace() {
                 return;
             } else {
                 alert(`成功生成 ${generateResponse.data.section_count || 0} 个段落`);
+                await fetchSections(); 
             }
-
-            await fetchProjectData(id, { showLoader: false });
         } catch (err: any) {
             console.error('Failed to generate content', err);
             alert(`生成正文失败：${getApiErrorMessage(err, '请稍后重试。')}`);
@@ -586,42 +594,35 @@ export function ProjectWorkspace() {
     if (!currentProject) return <div className="p-8">找不到该项目...</div>;
 
     const renderParsedStructure = () => {
-        const parsedDoc = documents.find((d) => d.parse_status === 'completed' && Array.isArray(d.sections) && d.sections.length > 0);
+        const parsedDoc = documentId ? documents.find((d) => d.id === documentId) : null;
 
-        // Show loading/error states for any document being parsed
-        const parsingDoc = documents.find((d) => d.parse_status === 'parsing' || d.parse_status === 'pending');
-        const failedDoc = documents.find((d) => d.parse_status === 'failed');
-
-        if (!parsedDoc) {
+        if (!parsedDoc || !sections || !Array.isArray(sections) || sections.length === 0) {
+            // 没有章节结构，显示解析状态
             return (
                 <div className="space-y-3 py-2">
-                    {parsingDoc && (
+                    {(parsedDoc?.parse_status === 'parsing' || parsedDoc?.parse_status === 'pending') && (
                         <div className="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg text-blue-700 text-sm">
                             <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                            <span>正在解析 <strong>{parsingDoc.original_filename}</strong>，请稍候…</span>
+                            <span>正在解析 <strong>{parsedDoc.original_filename}</strong>，请稍候…</span>
                         </div>
                     )}
-                    {failedDoc && (
+                    {parsedDoc?.parse_status === 'failed' && (
                         <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
                             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                             <div>
-                                <p className="font-medium">解析失败：{failedDoc.original_filename}</p>
-                                {failedDoc.parse_error && <p className="text-xs mt-1 opacity-80">{failedDoc.parse_error}</p>}
+                                <p className="font-medium">解析失败：{parsedDoc.original_filename}</p>
+                                {parsedDoc.parse_error && <p className="text-xs mt-1 opacity-80">{parsedDoc.parse_error}</p>}
                             </div>
                         </div>
                     )}
-                    {!parsingDoc && !failedDoc && (
-                        <div className="text-sm text-muted-foreground py-4 text-center">上传文档并等待解析完成后，这里会显示章节结构。</div>
-                    )}
+                    <div className="text-sm text-muted-foreground py-4 text-center">上传文档并等待解析完成后，这里会显示章节结构。</div>
                 </div>
             );
         }
 
-        const sections = parsedDoc.sections || [];
         const roots = buildSectionTree(sections);
         const allIndices = sections.map((_, idx) => idx);
         const selectedSet = new Set(selectedSectionIndices);
-        const isOcr = !!parsedDoc.ocr_markdown;
 
         const selectMany = (indices: number[], checked: boolean) => {
             setSelectedSectionIndices((prev) => {
@@ -704,27 +705,12 @@ export function ProjectWorkspace() {
                             onClick={() => { const n: Record<string, boolean> = {}; for (const r of roots) n[`sec-${r.idx}`] = true; setCollapsedGroups(n); }}
                         >折叠全部</button>
                     </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                        {isOcr && (
-                            <button
-                                className="flex items-center gap-1 text-xs px-2 py-1 rounded border border-blue-300 text-blue-600 hover:bg-blue-50 transition-colors"
-                                onClick={() => handleDownloadMarkdown(parsedDoc)}
-                                title="下载 OCR Markdown"
-                            >
-                                <FileDown className="w-3.5 h-3.5" />
-                                <span>下载 MD</span>
-                            </button>
-                        )}
-                    </div>
                 </div>
 
                 {/* Status bar */}
                 <div className="flex items-center gap-3 px-1 py-1.5 text-xs text-muted-foreground border-b shrink-0">
                     <span className="flex items-center gap-1">
-                        {isOcr
-                            ? <><ScanText className="w-3 h-3 text-blue-500" /><span className="text-blue-600 font-medium">PaddleOCR</span></>
-                            : <><FileText className="w-3 h-3" /><span>结构解析</span></>
-                        }
+                        <><FileText className="w-3 h-3" /><span>结构解析</span></>
                     </span>
                     {parsedDoc.page_count && <span>{parsedDoc.page_count} 页</span>}
                     <span className="ml-auto font-medium text-foreground">{selectedSectionIndices.length}/{sections.length} 段已选</span>
@@ -841,10 +827,7 @@ export function ProjectWorkspace() {
                                     )}
                                 </div>
                                 <div className="text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap break-words">
-                                    {((activeSection as any).content || (activeSection as any).text || '（无内容预览）').slice(0, 2000)}
-                                    {((activeSection as any).content || (activeSection as any).text || '').length > 2000 && (
-                                        <span className="text-muted-foreground italic">…（内容较长，已截断）</span>
-                                    )}
+                                    {(activeSection as any).content || (activeSection as any).text || '（无内容预览）'}
                                 </div>
                             </div>
                         ) : (
@@ -870,7 +853,7 @@ export function ProjectWorkspace() {
                         <div className="flex items-center justify-between">
                             <CardTitle className="text-lg flex items-center">
                                 <FileText className="w-5 h-5 mr-2 text-primary" />
-                                论文结构
+                                {currentProject?.name || '论文结构'}
                             </CardTitle>
                             <Button
                                 variant="ghost"
@@ -884,9 +867,26 @@ export function ProjectWorkspace() {
                     </CardHeader>
                     <CardContent className="flex-1 overflow-hidden p-0 flex flex-col">
                         <div className="px-4 py-2 border-b bg-background shrink-0">
-                            <div className="text-xs text-muted-foreground">
-                                勾选章节以限定提示词生成范围，点击标题可预览内容。
-                            </div>
+                            <Select
+                                value={documentId}
+                                onValueChange={(value) => {
+                                    if (value) {
+                                        setDocumentId(value);
+                                    }
+                                }}
+                                disabled={documents.length === 0}
+                            >
+                                <SelectTrigger className="w-full">
+                                    <SelectValue placeholder="选择文档" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {documents.map((doc) => (
+                                        <SelectItem key={doc.id} value={doc.id}>
+                                            {doc.original_filename} ({doc.id})
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
                         </div>
                         <div className="flex-1 overflow-hidden p-4 flex flex-col">
                             {renderParsedStructure()}
@@ -931,14 +931,13 @@ export function ProjectWorkspace() {
                     <div className="bg-background">
                         <div className="p-4 border-b">
                             <div className="text-sm font-medium text-muted-foreground mb-2">你想生成什么图？（可选）</div>
-                            {Object.keys(promptPrompts).length === 0 ? (
+                            {Object.keys(promptDetails).length === 0 ? (
                                 <div className="text-sm text-muted-foreground py-8 text-center border rounded-md bg-muted/20">
                                     当前暂无提示词
                                 </div>
                             ) : (
                                 <div className="space-y-3 max-h-[300px] overflow-y-auto">
-                                    {Object.entries(promptPrompts).map(([prompt_id, prompt_content], index: number) => {
-                                        const detail = promptDetails[prompt_id];
+                                    {Object.entries(promptDetails).map(([prompt_id, detail], index: number) => {
                                         const title = detail?.title || `提示词 ${index + 1}`;
                                         return (
                                             <Card
@@ -959,7 +958,7 @@ export function ProjectWorkspace() {
                                                                     e.stopPropagation();
                                                                     setPromptViewer({
                                                                         open: true,
-                                                                        content: String(prompt_content),
+                                                                        content: String(detail?.active_prompt || ''),
                                                                         title: title,
                                                                         prompt_id: prompt_id
                                                                     });
@@ -992,13 +991,13 @@ export function ProjectWorkspace() {
                                                             e.stopPropagation();
                                                             setPromptViewer({
                                                                 open: true,
-                                                                content: String(prompt_content),
+                                                                content: String(detail?.active_prompt || ''),
                                                                 title: title,
                                                                 prompt_id: prompt_id
                                                             });
                                                         }}
                                                     >
-                                                        {String(prompt_content)}
+                                                        {String(detail?.active_prompt || '')}
                                                     </div>
                                                 </CardContent>
                                             </Card>
@@ -1080,31 +1079,7 @@ export function ProjectWorkspace() {
                                                     </Badge>
                                                 </div>
                                             </div>
-                                            {/* OCR button for PDFs */}
-                                            {doc.file_type === 'pdf' && (
-                                                <div className="flex items-center gap-2">
-                                                    <button
-                                                        className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded border transition-colors border-blue-300 text-blue-600 hover:bg-blue-50 cursor-pointer"
-                                                        disabled={ocrLoading[doc.id] || doc.parse_status === 'parsing'}
-                                                        onClick={() => handleTriggerOcr(doc)}
-                                                        title="OCR 解析此 PDF"
-                                                    >
-                                                        {ocrLoading[doc.id]
-                                                            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                                            : <ScanText className="w-3.5 h-3.5" />
-                                                        }
-                                                        {ocrLoading[doc.id] ? 'OCR 解析中…' : 'OCR 重新解析'}
-                                                    </button>
-                                                    {doc.ocr_markdown && (
-                                                        <button
-                                                            className="flex items-center gap-1 text-xs px-2 py-1.5 rounded border border-muted text-muted-foreground hover:bg-muted transition-colors"
-                                                            onClick={() => handleDownloadMarkdown(doc)}
-                                                        >
-                                                            <FileDown className="w-3.5 h-3.5" /> 下载 MD
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            )}
+
                                         </div>
                                     ))}
                                 </div>
@@ -1308,7 +1283,7 @@ export function ProjectWorkspace() {
                                                             size="sm"
                                                             variant="ghost"
                                                             onClick={() => {
-                                                                const content = latestImg?.final_prompt_sent || prompt.original_prompt || prompt.edited_prompt || '';
+                                                                const content = latestImg?.final_prompt_sent || prompt.active_prompt|| '';
                                                                 setPromptViewer({open: true, content, title: prompt.title || `Figure ${prompt.figure_number ?? ''}`, prompt_id: ''});
                                                             }}
                                                             title="查看生成 Prompt"
@@ -1409,8 +1384,8 @@ export function ProjectWorkspace() {
                                         await navigator.clipboard.writeText(promptViewer.content);
                                         setCopiedFeedback(true);
                                         setTimeout(() => setCopiedFeedback(false), 2000);
-                                    } catch {
-                                        // fallback
+                                    } catch (error) {
+                                        console.error('复制失败: 两种方式均不可用');
                                     }
                                 }}
                             >
@@ -1443,9 +1418,11 @@ export function ProjectWorkspace() {
                                                     edited_prompt: promptEditContent
                                                 });
                                                 // 更新本地状态
-                                                setPromptPrompts(prev => {
-                                                    const updated = {...prev} as Record<string, string>;
-                                                    updated[promptViewer.prompt_id] = promptEditContent;
+                                                setPromptDetails(prev => {
+                                                    const updated = {...prev};
+                                                    if (updated[promptViewer.prompt_id]) {
+                                                        updated[promptViewer.prompt_id]['active_prompt'] = promptEditContent;
+                                                    }
                                                     return updated;
                                                 });
                                                 setPromptViewer(prev => ({...prev, content: promptEditContent}));
