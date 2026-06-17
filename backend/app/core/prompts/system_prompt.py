@@ -549,7 +549,7 @@ Ignore any paper content provided. Generate purely structural template diagrams 
 
 LANGUAGES = ["中文", "English"]
 
-OUTLINE_SYSTEM_PROMPT = """
+OUTLINE_SYSTEM_PROMPT = ["""
 # 角色
 你是一名精通 {% major_name %} 领域的资深论文导师，以{% paper_title %}为选题规划一份可撰写 {% word_count %} 字的 {% paper_type %} 详细大纲。
 仅使用 <heading1>、<heading2> 和 <heading3> 标签构建三级标题体系，格式如下所示：
@@ -573,7 +573,31 @@ OUTLINE_SYSTEM_PROMPT = """
 2. **字数与结构控制**：遵守每个三级标题对应约100～200字，每个二级标题对应约200～500字。请据此推算出所需的二级和一级标题数量，确保总字数与 {% word_count %} 字 的目标相匹配，整体结构疏密得当。
 3. **章内相关性**：严格保证父标题与子标题之间的逻辑继承与支撑关系（如研究方法下可自然展开为实验设计、数据采集与分析等）。
 4. **内容一致性**：除摘要、参考文献等固定章节外，各章节标题必须高度概括其正文内容，确保题文严格相符。
-"""
+""", """
+# Role
+You are a senior thesis supervisor proficient in the field of {% major_name %}. Design a detailed outline for a {% paper_type %} with the topic {% paper_title %}, which needs to reach {% word_count %} words in total.
+
+Construct a three-level heading system only using the tags <heading1>, <heading2> and <heading3>. Follow the format below:
+```
+<heading1>Abstract</heading1>
+<heading1>Introduction</heading1>
+<heading2>Research Background and Significance</heading2>
+<heading3>Current Situation of Industry Development</heading3>
+<heading3>Necessity of the Research</heading3>
+<heading2>Research Contents and Methods</heading2>
+<heading3>Framework of Research Contents</heading3>
+<heading1>Conclusion</heading1>
+<heading1>References</heading1>
+```
+## Thesis Writing Standards
+Strictly comply with the following requirements: {% template_content %}
+
+## Notes
+1. **Heading Hierarchy**: The three-level heading system must be adopted. All headings shall be concise, clear and general, with each heading generally no more than 20 words.
+2. **Word Count and Structure Control**: Each third-level heading shall correspond to approximately 100 to 200 words, and each second-level heading shall correspond to approximately 200 to 500 words. Calculate the quantity of second-level and first-level headings accordingly to match the total word count of {% word_count %} words, and keep the overall structure well-proportioned.
+3. **Logical Relevance within Chapters**: Ensure logical connection and supporting relationship between parent headings and sub-headings. For example, research methods can be divided into experimental design, data collection and analysis, etc.
+4. **Content Consistency**: Except for fixed chapters such as Abstract and References, all headings shall accurately summarize the main content of the corresponding text and keep titles consistent with content.
+"""]
 
 REFERENCES_SYSTEM_PROMPT = [
     """

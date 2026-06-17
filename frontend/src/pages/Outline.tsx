@@ -109,23 +109,22 @@ export function Outline() {
          // 如果有文档，获取第一个文档的 sections
          if (docs.length > 0) {
             const firstDoc = docs[0];
-            setDocumentId(firstDoc.id || null);
-            const docResponse = await api.get(`/documents/${firstDoc.id}`);
-            if (docResponse.data) {
-               if (docResponse.data.title) {
-                  setTitle(docResponse.data.title);
+            if (firstDoc.id) {
+               setDocumentId(firstDoc.id);
+               if (firstDoc.title) {
+                  setTitle(firstDoc.title);
                }
-               if (docResponse.data.paper_type) {
-                  setPaperType(docResponse.data.paper_type);
+               if (firstDoc.paper_type) {
+                  setPaperType(firstDoc.paper_type);
                }
-               if (docResponse.data.subject_code) {
-                  setSubjectCode(docResponse.data.subject_code);
+               if (firstDoc.subject_code) {
+                  setSubjectCode(firstDoc.subject_code);
                }
-               if (docResponse.data.file_size_bytes) {
-                  setWordCount(docResponse.data.file_size_bytes);
+               if (firstDoc.file_size_bytes) {
+                  setWordCount(firstDoc.file_size_bytes);
                }
-               if (docResponse.data.template_id) {
-                  setSelectedTemplate(docResponse.data.template_id);
+               if (firstDoc.template_id) {
+                  setSelectedTemplate(firstDoc.template_id);
                }
             } 
          }
