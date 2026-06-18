@@ -5,6 +5,7 @@ import logging
 
 from fastapi import APIRouter, Depends, UploadFile
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.base import (
@@ -551,8 +552,8 @@ async def create_sections_prompt(
             user_prompt = _build_section_content(paragraph)
         else:
             _sections: list[Section] = await get_materials_from_db(
-                document.id, MaterialType.OUTLINE, db)
-            user_prompt = '\n'.join(["#"*section.level + " " + section.content for section in _sections])
+                document.id, MaterialType.SECTION, db)
+            user_prompt = '\n'.join(["#"*section.level + " " + section.title for section in _sections])
         
         system_prompt = _build_system_prompt(material_type.name, params)
         logger.debug("create_sections_prompt: paragraph[%d] system_prompt_len=%d, user_prompt_len=%d",
@@ -564,7 +565,7 @@ async def create_sections_prompt(
             project_id=project_id,
             document_id=document.id,
             figure_number=exist_cnt+i,
-            original_prompt=system_prompt+"\nUser Input:"+user_prompt,
+            original_prompt=system_prompt+"\nUser Input:\n"+user_prompt,
             edited_prompt="",
             generation_status="pending",
             source_sections=[section.id for section in paragraph],
@@ -588,59 +589,88 @@ async def create_sections_prompt(
 
 
 async def _generate_sections(prompt_id: str):
-    """根据prompt_id生成正文（使用独立 DB session，支持并发）"""
+    """根据prompt_id生成正文（使用独立 DB session，支持并发，带数据库锁重试）"""
     from app.dependencies import get_async_session_factory
+
     service = DeepseekService()
     session_factory = get_async_session_factory()
-    async with session_factory() as db:
-        # 获取 Prompt
-        prompt = await get_prompt_from_db(prompt_id, db)
-        section_count = 0
-        try: 
-            prompt_str = (prompt.active_prompt or "").split("\nUser Input:")
-            if len(prompt_str) != 2:
-                raise BadRequestException("Prompt format error: missing User Input section")
-            system_prompt, user_prompt = prompt_str[0].strip(), prompt_str[1].strip()
-            result = await service.generate_txt_from_prompt(
-                user_prompt=user_prompt,
-                system_prompt=system_prompt,
-                material_type=prompt.material_type,
-            )
-            if prompt.material_type == MaterialType.ABSTRACT:
-                content = result.get("data", "")
-                if not content:
-                    raise BadRequestException("Abstract content is empty")
-                await db.execute(update(Section).where(
-                    Section.id == prompt.source_sections[0]
-                ).values(
-                    content=content,
-                ))
-                section_count += 1
-            else:
-                input_nodes = service._parse_sections_response(user_prompt)
-                sections = result.get("data", [])
-                if len(sections) + len(prompt.source_sections) != len(input_nodes):
-                    raise BadRequestException("Sections count not match input nodes count")
-                section_count += len(sections)
-                header_idx, section_idx = 0, 0
-                for _node in input_nodes:
-                    if _node["level"] > 3:
-                        await db.execute(update(Section).where(
-                            Section.id == prompt.source_sections[header_idx]
-                        ).values(
-                            content=sections[section_idx]["title"],
-                        ))
-                        section_idx += 1
-                    else:
-                        header_idx += 1
-            # 更新 Prompt 状态
-            prompt.generation_status = "completed"
-            await db.commit()
-            return section_count
-        except Exception as e:
-            prompt.generation_status = "failed"
-            await db.commit()
-            raise e
+
+    max_retries = 5
+    last_exception = None
+
+    async def _mark_failed():
+        """在独立 session 中标记 prompt 为 failed。"""
+        try:
+            async with session_factory() as fresh_db:
+                fresh_prompt = await get_prompt_from_db(prompt_id, fresh_db)
+                fresh_prompt.generation_status = "failed"
+                await fresh_db.commit()
+        except Exception:
+            logger.exception("Failed to mark prompt %s as failed", prompt_id)
+
+    for attempt in range(max_retries):
+        async with session_factory() as db:
+            prompt = await get_prompt_from_db(prompt_id, db)
+            section_count = 0
+            try:
+                prompt_str = (prompt.active_prompt or "").split("\nUser Input:\n")
+                if len(prompt_str) != 2:
+                    raise BadRequestException("Prompt format error: missing User Input section")
+                system_prompt, user_prompt = prompt_str[0].strip(), prompt_str[1].strip()
+                result = await service.generate_txt_from_prompt(
+                    user_prompt=user_prompt,
+                    system_prompt=system_prompt,
+                    material_type=prompt.material_type,
+                )
+                if prompt.material_type == MaterialType.ABSTRACT:
+                    content = result.get("data", "")
+                    if not content:
+                        raise BadRequestException("Abstract content is empty")
+                    await db.execute(update(Section).where(
+                        Section.id == prompt.source_sections[0]
+                    ).values(
+                        content=content,
+                    ))
+                    section_count += 1
+                else:
+                    input_nodes = service._parse_sections_response(user_prompt)
+                    sections = result.get("data", [])
+                    if len(sections) + len(prompt.source_sections) != len(input_nodes):
+                        raise BadRequestException("Sections count not match input nodes count")
+                    section_count += len(sections)
+                    header_idx, section_idx = 0, 0
+                    for _node in input_nodes:
+                        if _node["level"] > 3:
+                            await db.execute(update(Section).where(
+                                Section.id == prompt.source_sections[header_idx]
+                            ).values(
+                                content=sections[section_idx]["title"],
+                            ))
+                            section_idx += 1
+                        else:
+                            header_idx += 1
+                prompt.generation_status = "completed"
+                await db.commit()
+                return section_count
+            except OperationalError as e:
+                await db.rollback()
+                if "database is locked" in str(e) and attempt < max_retries - 1:
+                    wait = 0.1 * (2 ** attempt)
+                    logger.warning(
+                        "Database locked for prompt %s, retrying in %.1fs (attempt %d/%d)",
+                        prompt_id, wait, attempt + 1, max_retries,
+                    )
+                    last_exception = e
+                    await asyncio.sleep(wait)
+                    continue
+                await _mark_failed()
+                raise
+            except Exception:
+                await db.rollback()
+                await _mark_failed()
+                raise
+
+    raise last_exception  # type: ignore[misc]
 
 
 @router.post("/sections/generate", response_model=SectionGenerateResponse)
@@ -662,23 +692,41 @@ async def generate_sections_content(
     # prompt_ids 不能为空
     if not data.prompt_ids:
         raise BadRequestException("prompt_ids is empty")
-        
+
     # 获取 Document
     document: Document = await get_document_from_db(data.document_id, db)
+
+    # 提前提交父 session，释放数据库锁，避免与并发任务冲突
+    await db.commit()
 
     # 调用 API（每个任务使用独立 DB session，支持并发）
     create_tasks = []
     for prompt_id in data.prompt_ids:
         create_tasks.append(asyncio.create_task(
             _generate_sections(prompt_id)))
-    section_counts = await asyncio.gather(*create_tasks)
+    # 使用 return_exceptions=True 处理部分失败
+    results = await asyncio.gather(*create_tasks, return_exceptions=True)
 
-    # 更新 Document 状态
-    document.parse_status = "completed"
+    # 收集成功/失败统计
+    succeeded = 0
+    failed = 0
+    errors = []
+    for r in results:
+        if isinstance(r, Exception):
+            failed += 1
+            errors.append(str(r))
+        else:
+            succeeded += r
+
+    # 更新 Document 状态（在新事务中）
+    document.parse_status = "completed" if failed == 0 else "partial"
+    db.add(document)
     await db.flush()
+    await db.commit()
 
     return SectionGenerateResponse(
-        success=True,
-        message="Sections generated successfully",
-        section_count=sum(section_counts),
+        success=failed == 0,
+        message=f"Sections generated: {succeeded} succeeded, {failed} failed"
+                + (f" — errors: {'; '.join(errors[:3])}" if errors else ""),
+        section_count=succeeded,
     )
