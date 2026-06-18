@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { FileUp, FileText, Image as ImageIcon, Send, RefreshCw, Download, ChevronLeft, ChevronRight, ScanText, FileDown, AlertCircle, CheckCircle2, Loader2, Eye, Copy, Check } from 'lucide-react';
+import { FileUp, FileText, Image as ImageIcon, Send, RefreshCw, Download, ChevronLeft, ChevronRight, ScanText, FileDown, AlertCircle, CheckCircle2, Loader2, Eye, Copy } from 'lucide-react';
 
 import api from '../lib/api';
 import { useProjectStore } from '../store/projectStore';
@@ -13,7 +13,7 @@ import { Badge } from '../components/ui/badge';
 import { ScrollArea } from '../components/ui/scroll-area';
 import { Textarea } from '../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../components/ui/dialog';
 
 type SectionItem = {
     id: string;
@@ -56,23 +56,28 @@ export function ProjectWorkspace() {
     const documentIdRef = useRef<string | null>(null);
     documentIdRef.current = documentId;  // keep ref in sync for async callbacks
     const [sections, setSections] = useState<SectionItem[]>([]);
+    // ============================================================
+    //  Image generation state
+    // ============================================================
     const [prompts, setPrompts] = useState<any[]>([]);
     const [images, setImages] = useState<any[]>([]);
-
-    // Upload state
-    const fileInputRef = useRef<HTMLInputElement>(null);
-    const [isUploading, setIsUploading] = useState(false);
-    const [uploadProgress, setUploadProgress] = useState(0);
-
-    // Generation state
     const [isAutoGenerating, setIsAutoGenerating] = useState(false);
     const [isDownloading, setIsDownloading] = useState<string | null>(null);
     const [isPreviewing, setIsPreviewing] = useState<Record<string, boolean>>({});
     const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
     const previewUrlsRef = useRef<Record<string, string>>({});
+
+    // ============================================================
+    //  Content (text) generation state
+    // ============================================================
     const promptMode = 'sections';
     const [promptDetails, setPromptDetails] = useState<Record<string, {id: string; title: string; active_prompt: string}>>({});
     const [generatingPrompts, setGeneratingPrompts] = useState<Record<string, boolean>>({});
+
+    // Upload state
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [isUploading, setIsUploading] = useState(false);
+    const [uploadProgress, setUploadProgress] = useState(0);
     const [templateMode, setTemplateMode] = useState(false);
     const [selectedSectionIndices, setSelectedSectionIndices] = useState<number[]>([]);
     const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
@@ -83,7 +88,6 @@ export function ProjectWorkspace() {
     const [promptViewer, setPromptViewer] = useState<{open: boolean; content: string; title: string; prompt_id: string}>({open: false, content: '', title: '', prompt_id: ''});
     const [promptEditing, setPromptEditing] = useState(false);
     const [promptEditContent, setPromptEditContent] = useState('');
-    const [copiedFeedback, setCopiedFeedback] = useState(false);
     const [copiedSectionFeedback, setCopiedSectionFeedback] = useState(0);
 
     type SectionNode = {
@@ -190,7 +194,6 @@ export function ProjectWorkspace() {
             fetchProjectData(id, { showLoader: true });
         }
         return () => {
-            setCurrentProject(null);
             colorSchemesFetchedRef.current = false;
         };
     }, [id]);
@@ -258,7 +261,7 @@ export function ProjectWorkspace() {
         if (!id || !documentId) return;
         try {
             const response = await api.get(`/documents/${documentId}/sections`);
-            const sectionsData = response.data || [];
+            const sectionsData = response.data.sections || [];
             setSections(sectionsData);
         } catch (err) {
             console.error('Failed to fetch sections:', err);
@@ -358,7 +361,8 @@ export function ProjectWorkspace() {
         if (showLoader) setIsInitialLoading(true);
         else setIsRefreshing(true);
         try {
-            if (!currentProject) {
+            // Re-fetch only when currentProject is missing or id mismatches
+            if (!currentProject || String(currentProject.id) !== projectId) {
                 const projRes = await api.get(`/projects/${projectId}`);
                 setCurrentProject(projRes.data);
             }
@@ -563,10 +567,17 @@ export function ProjectWorkspace() {
                 alert('创建Prompt失败，请稍后重试。');
                 return;
             }
-            
+
+            // prompt_prompts is a dict {id: prompt_text, ...}
+            const promptIds = Object.keys(promptResponse.data.prompt_prompts);
+            if (promptIds.length === 0) {
+                alert('未生成任何Prompt，请检查章节选择。');
+                return;
+            }
+            // 刷新sections以获取最新的prompt关联
+            await fetchSections();
             // 步骤2: 生成正文内容
-            setGeneratingPrompts(prev => ({...prev, [promptResponse.data.data.prompt_prompts[0].id]: true}));
-            const promptIds = promptResponse.data.prompt_prompts.map((p: any) => p.id);
+            setGeneratingPrompts(prev => ({...prev, [promptIds[0]]: true}));
             const payload: any = {
                 document_id: documentId,
                 prompt_ids: promptIds,
@@ -961,7 +972,7 @@ export function ProjectWorkspace() {
                     </CardHeader>
                     <CardContent className="flex-1 overflow-hidden p-0 flex flex-col">
 
-                    {/* Upload + settings (secondary) */}
+                    {/* 正文 Prompt 面板 */}
                     <div className="bg-background">
                         <div className="p-4 border-b">
                             <div className="text-sm font-medium text-muted-foreground mb-2">你想生成什么图？（可选）</div>
@@ -1147,7 +1158,7 @@ export function ProjectWorkspace() {
                 </div>
             )}
 
-            {/* Right Column: Image Cards (no tabs) */}
+            {/* Right Column: 图片 Prompt & 生成结果 */}
             <div className="flex-1 flex flex-col h-full">
                 <div className="bg-muted/30 border-b py-4 px-6 flex items-center">
                     <ImageIcon className="w-5 h-5 mr-2 text-primary" />
@@ -1385,12 +1396,14 @@ export function ProjectWorkspace() {
                 setPromptViewer({open: false, content: '', title: '', prompt_id: ''});
                 setPromptEditing(false);
                 setPromptEditContent('');
-                setCopiedFeedback(false);
             }
         }}>
             <DialogContent className="max-w-2xl max-h-[85vh]">
                 <DialogHeader>
                     <DialogTitle>{promptViewer.prompt_id ? '提示词内容' : '生成图片的 Prompt'}</DialogTitle>
+                    <DialogDescription>
+                        {promptViewer.prompt_id ? '查看和编辑提示词的详细内容' : '查看用于生成图片的 Prompt 文本'}
+                    </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-3">
                     {promptViewer.title && (
@@ -1404,31 +1417,9 @@ export function ProjectWorkspace() {
                         />
                     ) : (
                         <div className="relative">
-                            <pre className="whitespace-pre-wrap text-sm bg-muted p-4 pr-14 rounded-md max-h-[55vh] overflow-y-auto text-foreground/85 leading-relaxed">
+                            <pre className="whitespace-pre-wrap text-sm bg-muted p-4 rounded-md max-h-[55vh] overflow-y-auto text-foreground/85 leading-relaxed">
                                 {promptViewer.content || '暂无 Prompt 内容'}
                             </pre>
-                            <Button
-                                size="sm"
-                                variant="outline"
-                                className="absolute top-2 right-2"
-                                disabled={!promptViewer.content}
-                                onClick={async () => {
-                                    if (!promptViewer.content) return;
-                                    try {
-                                        await navigator.clipboard.writeText(promptViewer.content);
-                                        setCopiedFeedback(true);
-                                        setTimeout(() => setCopiedFeedback(false), 2000);
-                                    } catch (error) {
-                                        console.error('复制失败: 两种方式均不可用');
-                                    }
-                                }}
-                            >
-                                {copiedFeedback ? (
-                                    <><Check className="h-3.5 w-3.5 mr-1" /> 已复制</>
-                                ) : (
-                                    <><Copy className="h-3.5 w-3.5 mr-1" /> 复制</>
-                                )}
-                            </Button>
                         </div>
                     )}
                     <div className="flex gap-2 justify-end">
