@@ -56,6 +56,30 @@ export function ProjectWorkspace() {
     const documentIdRef = useRef<string | null>(null);
     documentIdRef.current = documentId;  // keep ref in sync for async callbacks
     const [sections, setSections] = useState<SectionItem[]>([]);
+    
+    // Project name editing state
+    const [isEditingProjectName, setIsEditingProjectName] = useState(false);
+    const [editedProjectName, setEditedProjectName] = useState('');
+    const editNameInputRef = useRef<HTMLInputElement>(null);
+
+    const handleSaveProjectName = async () => {
+        if (!editedProjectName.trim() || !currentProject?.id) {
+            setIsEditingProjectName(false);
+            return;
+        }
+        try {
+            const response = await api.put(`/projects/${currentProject.id}`, {
+                name: editedProjectName.trim()
+            });
+            if (response.data) {
+                setCurrentProject({ ...currentProject, name: editedProjectName.trim() });
+            }
+        } catch (error) {
+            console.error('Failed to update project name:', error);
+        }
+        setIsEditingProjectName(false);
+    };
+
     // ============================================================
     //  Image generation state
     // ============================================================
@@ -537,7 +561,9 @@ export function ProjectWorkspace() {
             } else {
                 alert(`成功生成 ${generateResponse.data.section_count || 0} 个段落`);
                 // 刷新section数据
-                await fetchSections();
+                if (generateResponse.data.section_count > 0) {
+                    await fetchSections();
+                }
             }
 
         } catch (err: any) {
@@ -898,7 +924,51 @@ export function ProjectWorkspace() {
                         <div className="flex items-center justify-between">
                             <CardTitle className="text-lg flex items-center">
                                 <FileText className="w-5 h-5 mr-2 text-primary" />
-                                {currentProject?.name || '论文结构'}
+                                {isEditingProjectName ? (
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            ref={editNameInputRef}
+                                            type="text"
+                                            value={editedProjectName}
+                                            onChange={(e) => setEditedProjectName(e.target.value)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                    handleSaveProjectName();
+                                                } else if (e.key === 'Escape') {
+                                                    setIsEditingProjectName(false);
+                                                }
+                                            }}
+                                            className="flex-1 px-2 py-1 border rounded text-sm bg-background"
+                                            autoFocus
+                                        />
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={handleSaveProjectName}
+                                            className="h-7"
+                                        >
+                                            <CheckCircle2 className="w-4 h-4" />
+                                        </Button>
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => setIsEditingProjectName(false)}
+                                            className="h-7"
+                                        >
+                                            <AlertCircle className="w-4 h-4" />
+                                        </Button>
+                                    </div>
+                                ) : (
+                                    <span
+                                        className="cursor-pointer hover:text-primary transition-colors"
+                                        onClick={() => {
+                                            setEditedProjectName(currentProject?.name || '');
+                                            setIsEditingProjectName(true);
+                                        }}
+                                    >
+                                        {currentProject?.name || '论文结构'}
+                                    </span>
+                                )}
                             </CardTitle>
                             <Button
                                 variant="ghost"
@@ -1400,10 +1470,7 @@ export function ProjectWorkspace() {
         }}>
             <DialogContent className="max-w-2xl max-h-[85vh]">
                 <DialogHeader>
-                    <DialogTitle>{promptViewer.prompt_id ? '提示词内容' : '生成图片的 Prompt'}</DialogTitle>
-                    <DialogDescription>
-                        {promptViewer.prompt_id ? '查看和编辑提示词的详细内容' : '查看用于生成图片的 Prompt 文本'}
-                    </DialogDescription>
+                    <DialogTitle>{promptViewer.prompt_id ? '提示词内容' : '生成正文的 Prompt'}</DialogTitle>
                 </DialogHeader>
                 <div className="space-y-3">
                     {promptViewer.title && (
@@ -1439,7 +1506,7 @@ export function ProjectWorkspace() {
                                         if (promptViewer.prompt_id && promptEditContent) {
                                             try {
                                                 // 调用API更新edited_prompt
-                                                await api.patch(`/prompts/${promptViewer.prompt_id}`, {
+                                                await api.post(`/prompts/${promptViewer.prompt_id}`, {
                                                     edited_prompt: promptEditContent
                                                 });
                                                 // 更新本地状态

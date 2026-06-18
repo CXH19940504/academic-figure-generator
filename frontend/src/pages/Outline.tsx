@@ -340,7 +340,7 @@ export function Outline() {
    const handleCopyAll = useCallback(async () => {
       if (!outlineResult) return;
       const text = outlineResult.map(item =>
-         '  '.repeat(item.level - 1) + `${item.order}. ${item.title}`
+         '  '.repeat(item.level - 1) + `${item.title}`
       ).join('\n');
       try {
          await navigator.clipboard.writeText(text);
@@ -625,14 +625,13 @@ export function Outline() {
                                     className={`flex items-start gap-2 p-2 rounded-md hover:bg-background/80 transition-colors group ${styles.indent}`}
                                  >
                                     <span className={`${styles.fontWeight} ${styles.fontSize} text-foreground flex-1 leading-relaxed`}>
-                                       <span className="inline-block w-6 text-muted-foreground/60 font-normal">{item.order}.</span>
                                        {item.title}
                                     </span>
                                     <Button
                                        variant="ghost"
                                        size="sm"
                                        className="opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6 p-0"
-                                       onClick={() => handleCopyOutline(`${item.order}. ${item.title}`, index)}
+                                       onClick={() => handleCopyOutline(`${item.title}`, index)}
                                     >
                                        {copiedIndex === index ? (
                                           <Check className="w-3 h-3 text-green-500" />

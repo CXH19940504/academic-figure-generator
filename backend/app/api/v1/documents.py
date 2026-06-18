@@ -187,6 +187,7 @@ async def _save_sections_to_db(result: dict, document_id: str, db: AsyncSession)
             document_id=document_id,
             title=section_data.get("title", f"Section {idx + 1}"),
             level=section_data.get("level", 1),
+            material_type=section_data.get("material_type", MaterialType.SECTION.value),
             content="",
             page_start=None,
             page_end=None,
@@ -280,15 +281,14 @@ async def create_outline_prompt(
     else:
         prompt = Prompt(
             project_id=project_id,
+            document_id=document_id,
             figure_number=0,
-            original_prompt=system_prompt,
         )
         db.add(prompt)
         await db.flush()
-    prompt.document_id = document_id
     prompt.title = data.title
     prompt.material_type = MaterialType.OUTLINE.value
-    prompt.edited_prompt = system_prompt
+    prompt.original_prompt = system_prompt
     await db.flush()
 
     return OutlinePromptResponse(
@@ -417,7 +417,6 @@ async def generate_outline_direct(
             document_id=document_id,
             figure_number=0,
             original_prompt="",
-            material_type=MaterialType.OUTLINE.value,
         )
         db.add(prompt)
         await db.flush()
@@ -529,12 +528,8 @@ async def create_sections_prompt(
     # 预查询 abstract_sections，避免循环内重复查询
     abstract_sections: list[Section] = []
     try:
-        if material_type != MaterialType.ABSTRACT:
-            abstract_sections = await get_materials_from_db(
-                document.id, MaterialType.ABSTRACT, db)
-            if not abstract_sections:
-                raise BadRequestException("Document does not generate abstract")
-            params["abstract_content"] = abstract_sections[0].content
+        abstract_sections = await get_materials_from_db(
+            document.id, MaterialType.ABSTRACT, db)
     except Exception:
         logger.warning("Abstract sections not found for document %s", document.id)
     
@@ -549,11 +544,14 @@ async def create_sections_prompt(
                     i, paragraph[0].title, material_type.name, len(paragraph))
         
         if material_type != MaterialType.ABSTRACT:
+            if not abstract_sections:
+                raise BadRequestException("Document does not generate abstract")
+            params["abstract_content"] = abstract_sections[0].content
             # 合并相同层级的章节
             user_prompt = _build_section_content(paragraph)
         else:
             _sections: list[Section] = await get_materials_from_db(
-                document.id, MaterialType.SECTION, db)
+                document.id, MaterialType.OUTLINE, db)
             user_prompt = '\n'.join(["#"*section.level + " " + section.content for section in _sections])
         
         system_prompt = _build_system_prompt(material_type.name, params)
