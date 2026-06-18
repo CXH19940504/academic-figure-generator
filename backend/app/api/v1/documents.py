@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.base import (
     get_document_from_db, get_project_from_db, get_project_or_create_from_db,
-    get_prompt_from_db, get_template_from_db, get_materials_from_db
+    get_prompt_from_db, get_template_from_db, get_materials_from_db,
+    get_document_without_outline
 )
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.dependencies import get_db
@@ -317,10 +318,7 @@ async def generate_outline_by_prompt(
         Generated outline with items and metadata.
     """
     # 获取 Prompt
-    result = await db.execute(select(Prompt).where(Prompt.id == prompt_id))
-    prompt: Prompt | None = result.scalar_one_or_none()
-    if prompt is None:
-        raise NotFoundException("Prompt not found")
+    prompt = await get_prompt_from_db(prompt_id, db)
     system_prompt = prompt.edited_prompt or prompt.original_prompt
     if not system_prompt:
         raise BadRequestException("Prompt edited_prompt and original_prompt are both empty")   
@@ -329,11 +327,7 @@ async def generate_outline_by_prompt(
     document_id = prompt.document_id
 
     # 获取 Document
-    doc_result = await db.execute(select(Document).where(Document.id == document_id))
-    document: Document | None = doc_result.scalar_one_or_none()
-    if document is None:
-        raise NotFoundException("Document not found")
-
+    document = await get_document_from_db(document_id, db)
     # 更新 Document 状态
     document.parse_status = "generating"
     await db.flush()
@@ -347,13 +341,13 @@ async def generate_outline_by_prompt(
             system_prompt=system_prompt,
             material_type=MaterialType.OUTLINE,
         )
+        document = await get_document_without_outline(document_id, db)
+        document_id = document.id
         section_count = await _save_sections_to_db(result, document_id, db)
         # 更新 Document 状态
         prompt.generation_status = "completed"
         document.parse_status = "completed"
         await db.flush()
-        await db.refresh(prompt)
-        await db.refresh(document)
 
         return OutlineGenerateResponse(
             success=True,
@@ -368,8 +362,6 @@ async def generate_outline_by_prompt(
         prompt.generation_status = "failed"
         document.parse_status = "failed"
         await db.flush()
-        await db.refresh(prompt)
-        await db.refresh(document)
         raise e
 
 
@@ -386,27 +378,11 @@ async def generate_outline_direct(
     project_id = project.id
 
     # 2.获取或创建文档
-    document = Document(
-        uuid="",
-        original_filename="",
-        file_type="",
-        file_size_bytes=0,
-        storage_path=""
-    )
-    if data.document_id:
-        section_count = (await db.execute(select(func.count()).select_from(Section).where(Section.document_id == data.document_id))).scalar_one()
-        if section_count is None or section_count == 0:
-            document = await get_document_from_db(data.document_id, db)
-    # Set required fields BEFORE flush to avoid IntegrityError
+    document = await get_document_without_outline(data.document_id, db)
     document.project_id = project_id
     document.title = data.title
     document.parse_status = "generating"
-
-    if document.id is None:
-        db.add(document)
-        await db.flush()
-
-    await db.refresh(document)
+    await db.flush()
     document_id = document.id
 
     # 3. 获取或创建 Prompt
@@ -421,6 +397,7 @@ async def generate_outline_direct(
         )
         db.add(prompt)
         await db.flush()
+        await db.refresh(prompt)
 
     prompt.document_id = document_id
     prompt.title = data.title
@@ -437,12 +414,12 @@ async def generate_outline_direct(
             system_prompt=data.outline_prompt,
             material_type=MaterialType.OUTLINE,
         )
+        document = await get_document_without_outline(document_id, db)
+        document_id = document.id
         section_count = await _save_sections_to_db(result, document_id, db)
         prompt.generation_status = "completed"
         document.parse_status = "completed"
         await db.flush()
-        await db.refresh(prompt)
-        await db.refresh(document)
         
         return OutlineGenerateResponse(
             success=True,
@@ -457,8 +434,6 @@ async def generate_outline_direct(
         prompt.generation_status = "failed"
         document.parse_status = "failed"
         await db.flush()
-        await db.refresh(prompt)
-        await db.refresh(document)
         raise e
 
 
@@ -488,15 +463,14 @@ async def create_sections_prompt(
     if document.project_id != project_id:
         raise BadRequestException("Document does not belong to this project")
     document.parse_status = "generating"
-    await db.refresh(document)
+    await db.flush()
 
     # 3. 合并所有子章节
     update_paragraphs = []
     paragraph: list[Section] = []
-    for idx in data.section_indices:
-        section = document.sections[idx]
-        logger.debug("create_sections_prompt: processing section idx=%d, title=%s, level=%d, material_type=%d",
-                     idx, section.title, section.level, section.material_type)
+    sectionDict = {section.id: section for section in document.sections}
+    for section_id in data.section_indices:
+        section = sectionDict[section_id]
         if not paragraph or section.level >= paragraph[-1].level:
             paragraph.append(section)
         else:
@@ -509,15 +483,14 @@ async def create_sections_prompt(
                 len(update_paragraphs), len(data.section_indices))
 
     # 4. 构建 prompt
-    exist_cnt_result = await db.execute(
+    exist_cnt = await db.execute(
         select(func.count())
         .select_from(Prompt)
         .where(
             Prompt.document_id == document.id,
             Prompt.material_type != MaterialType.FIGURE.value,
         )
-    )
-    exist_cnt = exist_cnt_result.scalar_one()
+    ).scalar_one()
     # 5. 构建 prompt
     prompt_prompts = {}
     params = {
@@ -535,6 +508,7 @@ async def create_sections_prompt(
         logger.warning("Abstract sections not found for document %s", document.id)
     
     for i, paragraph in enumerate(update_paragraphs):
+        # 获取章节类型
         try:
             material_type = MaterialType(paragraph[0].material_type)
         except KeyError:
@@ -543,7 +517,7 @@ async def create_sections_prompt(
             material_type = MaterialType.SECTION
         logger.info("create_sections_prompt: paragraph[%d] head_section=%s, material_type=%s, section_count=%d",
                     i, paragraph[0].title, material_type.name, len(paragraph))
-        
+        # 章节/非章节的user_prompt处理
         if material_type != MaterialType.ABSTRACT:
             if not abstract_sections:
                 raise BadRequestException("Document does not generate abstract")
@@ -554,13 +528,12 @@ async def create_sections_prompt(
             _sections: list[Section] = await get_materials_from_db(
                 document.id, MaterialType.SECTION, db)
             user_prompt = '\n'.join(["#"*section.level + " " + section.title for section in _sections])
-        
+        # 构建system_prompt
         system_prompt = _build_system_prompt(material_type.name, params)
         logger.debug("create_sections_prompt: paragraph[%d] system_prompt_len=%d, user_prompt_len=%d",
                      i, len(system_prompt), len(user_prompt))
-        prompt_title = paragraph[0].title
         prompt = Prompt(
-            title=prompt_title,
+            title=paragraph[0].title,
             material_type=material_type.value,
             project_id=project_id,
             document_id=document.id,
@@ -572,9 +545,8 @@ async def create_sections_prompt(
         )
         db.add(prompt)
         await db.flush()
+        await db.refresh(prompt)
         prompt_prompts[prompt.id] = prompt.original_prompt
-        logger.info("create_sections_prompt: created prompt id=%s, title=%s, material_type=%s, source_sections=%s",
-                    prompt.id, prompt.title, prompt.material_type, prompt.source_sections)
 
     logger.info("create_sections_prompt: done, created %d prompts for document_id=%s",
                 len(prompt_prompts), document.id)
@@ -623,19 +595,19 @@ async def _generate_sections(prompt_id: str):
                     material_type=prompt.material_type,
                 )
                 if prompt.material_type == MaterialType.ABSTRACT:
-                    content = result.get("data", "")
-                    if not content:
+                    sections = result.get("data", [])
+                    if not sections:
                         raise BadRequestException("Abstract content is empty")
                     await db.execute(update(Section).where(
                         Section.id == prompt.source_sections[0]
                     ).values(
-                        content=content,
+                        content=sections[0]["title"],
                     ))
                     section_count += 1
                 else:
                     input_nodes = service._parse_sections_response(user_prompt)
                     sections = result.get("data", [])
-                    if len(sections) + len(prompt.source_sections) != len(input_nodes):
+                    if len(sections) + len(prompt.source_sections) < len(input_nodes):
                         raise BadRequestException("Sections count not match input nodes count")
                     section_count += len(sections)
                     header_idx, section_idx = 0, 0

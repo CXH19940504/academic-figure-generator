@@ -125,7 +125,7 @@ class DeepseekService:
             raise ExternalAPIException("Deepseek", f"API error: {exc}") from exc
 
         duration_ms = int((time.monotonic() - start_time) * 1000)
-        if material_type == MaterialType.OUTLINE or material_type == MaterialType.SECTION:
+        if material_type in [MaterialType.OUTLINE, MaterialType.SECTION, MaterialType.ABSTRACT]:
             sections = self._parse_sections_response(result_text)
             logger.info(
                 "Deepseek API call completed in %d ms: %d sections items (stream=%s)",
@@ -135,12 +135,6 @@ class DeepseekService:
             )
             return {
                 "data": sections,
-                "duration_ms": duration_ms,
-            }
-        if material_type == MaterialType.ABSTRACT:
-            cleaned = self._clean_response(result_text)
-            return {
-                "data": cleaned,
                 "duration_ms": duration_ms,
             }
         else:
@@ -316,7 +310,7 @@ class DeepseekService:
         order = 0
 
         for match in section_pattern.finditer(cleaned):
-            level = int(match.group(1).split("heading")[1]) if match.group(1).startswith("heading") else 4  # 1, 2, or 3
+            level = int(match.group(1)[-1]) if match.group(1).startswith("heading") else 4  # 1, 2, or 3
             title = match.group(2).strip()
             
             if not title:

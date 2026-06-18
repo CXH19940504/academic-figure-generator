@@ -39,7 +39,6 @@ async def get_project_or_create_from_db(project_id: str | None, db: AsyncSession
             db.add(project)
             await db.flush()
             await db.refresh(project)
-        project_id = project.id
     else:
         project = await get_project_from_db(project_id, db)
     return project
@@ -64,6 +63,35 @@ async def get_document_from_db(document_id: str, db: AsyncSession) -> Document:
     document: Document | None = result.scalar_one_or_none()
     if document is None:
         raise NotFoundException("Document not found")
+    return document
+
+
+async def get_document_without_outline(document_id: str, db: AsyncSession) -> Document:
+    """Get document by ID, raise NotFoundException if not found, without outline."""
+    if document_id:
+        # 先尝试获取文档，如果不存在会抛出 NotFoundException
+        document = await get_document_from_db(document_id, db)
+        section_count = (await db.execute(select(func.count()).select_from(Section).where(
+            Section.document_id == document_id))).scalar_one()
+        if section_count and section_count > 0:
+            # 文档存在且有 section 数据，直接返回
+            return document
+        # 文档存在但无 section，需要重新生成
+        document.parse_status = "pending"
+        return document
+    
+    # 无 document_id，创建一个新的空文档
+    document = Document(
+        project_id="",
+        uuid="",
+        original_filename="",
+        file_type="",
+        file_size_bytes=0,
+        storage_path=""
+    )
+    db.add(document)
+    await db.flush()
+    await db.refresh(document)
     return document
 
 

@@ -138,13 +138,14 @@ export function ProjectWorkspace() {
         return null;
     };
 
-    const buildSectionTree = (sections: DocumentItem['sections']): SectionNode[] => {
+    const buildSectionTree = (sections: SectionItem[]): SectionNode[] => {
         const arr = (sections || []).map((sec, idx) => {
+            const sec_id: number = typeof sec?.id === 'number' ? sec.id : idx;
             const title = (sec?.title || `Section ${idx + 1}`).toString();
             const rawLevel = Number(sec?.level) || 1;
             const previewText = (sec?.content || sec?.text || '').toString().trim();
             const inferred = inferLevelFromTitle(title);
-            return { idx, title, rawLevel, inferred, preview: previewText };
+            return { idx: sec_id, title, rawLevel, inferred, preview: previewText };
         });
 
         const rawLevels = arr.map((s) => s.rawLevel);

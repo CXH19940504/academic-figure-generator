@@ -677,6 +677,7 @@ ABSTRACT_SYSTEM_PROMPT = [
 - 必须包含以下四个部分，顺序固定：目的、研究过程、解决问题、结论
 - 语言简练，高度概括章节精华
 - 逻辑连贯，四部分自然衔接
+- 返回格式为`<section>{% abstract_content %}</section>`，摘要内容替换 {% abstract_content %}部分进行返回
 
 # 禁止事项
 - 禁止简单浓缩全文
