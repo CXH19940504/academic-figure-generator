@@ -82,3 +82,15 @@ async def get_prompt_from_db(prompt_id: str, db: AsyncSession) -> Prompt:
     if prompt is None:
         raise NotFoundException("Prompt not found")
     return prompt
+
+
+async def get_materials_from_db(
+    document_id: str, material_type: MaterialType, db: AsyncSession
+) -> list[Section]:
+    """Get materials by document ID and material type."""
+    result = await db.execute(select(Section).where(
+        Section.document_id == document_id,
+        Section.material_type == material_type.value
+    ))
+    materials = result.scalars().all()
+    return materials

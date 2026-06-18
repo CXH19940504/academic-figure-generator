@@ -45,6 +45,8 @@ class MaterialType(IntEnum):
     TABLE = 7  # 表格
     FORMULA = 8  # 公式
     CODE = 9  # 代码
+    INTRODUCTION = 10  # 引言/绪论
+    CONCLUSION = 11  # 总结/结论
 
     @classmethod
     def get_value_by_name(cls, name: str) -> int:
@@ -66,11 +68,13 @@ class MaterialType(IntEnum):
 
         # 中文名称映射
         names = {
-            "引言": 1,
-            "结论": 1,
             "参考文献": 2,
             "摘要": 3,
-            "致谢": 4
+            "致谢": 4,
+            "引言": 10,
+            "绪论": 10,
+            "总结": 11,
+            "结论": 11,
         }
         return names.get(name, 1)
 

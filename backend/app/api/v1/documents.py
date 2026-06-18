@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.base import (
     get_document_from_db, get_project_from_db, get_project_or_create_from_db,
-    get_prompt_from_db, get_template_from_db
+    get_prompt_from_db, get_template_from_db, get_materials_from_db
 )
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.dependencies import get_db
@@ -518,10 +518,26 @@ async def create_sections_prompt(
         )
     )
     exist_cnt = exist_cnt_result.scalar_one()
+    # 5. 构建 prompt
     prompt_prompts = {}
     params = {
-        "major_name": get_subject_name_by_code(document.subject_code or "08")
+        "major_name": get_subject_name_by_code(document.subject_code or "08"),
+        "paper_title": document.title,
+        "paper_type": PaperType.get_name(document.paper_type),
     }
+    
+    # 预查询 abstract_sections，避免循环内重复查询
+    abstract_sections: list[Section] = []
+    try:
+        if material_type != MaterialType.ABSTRACT:
+            abstract_sections = await get_materials_from_db(
+                document.id, MaterialType.ABSTRACT, db)
+            if not abstract_sections:
+                raise BadRequestException("Document does not generate abstract")
+            params["abstract_content"] = abstract_sections[0].content
+    except Exception:
+        logger.warning("Abstract sections not found for document %s", document.id)
+    
     for i, paragraph in enumerate(update_paragraphs):
         try:
             material_type = MaterialType(paragraph[0].material_type)
@@ -531,9 +547,16 @@ async def create_sections_prompt(
             material_type = MaterialType.SECTION
         logger.info("create_sections_prompt: paragraph[%d] head_section=%s, material_type=%s, section_count=%d",
                     i, paragraph[0].title, material_type.name, len(paragraph))
+        
+        if material_type != MaterialType.ABSTRACT:
+            # 合并相同层级的章节
+            user_prompt = _build_section_content(paragraph)
+        else:
+            _sections: list[Section] = await get_materials_from_db(
+                document.id, MaterialType.SECTION, db)
+            user_prompt = '\n'.join(["#"*section.level + " " + section.content for section in _sections])
+        
         system_prompt = _build_system_prompt(material_type.name, params)
-        # 合并相同层级的章节
-        user_prompt = _build_section_content(paragraph)
         logger.debug("create_sections_prompt: paragraph[%d] system_prompt_len=%d, user_prompt_len=%d",
                      i, len(system_prompt), len(user_prompt))
         prompt_title = paragraph[0].title
@@ -574,6 +597,7 @@ async def _generate_sections(prompt_id: str):
     async with session_factory() as db:
         # 获取 Prompt
         prompt = await get_prompt_from_db(prompt_id, db)
+        section_count = 0
         try: 
             prompt_str = (prompt.active_prompt or "").split("\nUser Input:")
             if len(prompt_str) != 2:
@@ -584,26 +608,37 @@ async def _generate_sections(prompt_id: str):
                 system_prompt=system_prompt,
                 material_type=prompt.material_type,
             )
-            input_nodes = service._parse_sections_response(user_prompt)
-            sections = result.get("data", [])
-            if len(sections) + len(prompt.source_sections) != len(input_nodes):
-                raise BadRequestException("Sections count not match input nodes count")
-
-            header_idx, section_idx = 0, 0
-            for _node in input_nodes:
-                if _node["level"] > 3:
-                    await db.execute(update(Section).where(
-                        Section.id == prompt.source_sections[header_idx]
-                    ).values(
-                        content=sections[section_idx]["title"],
-                    ))
-                    section_idx += 1
-                else:
-                    header_idx += 1
+            if prompt.material_type == MaterialType.ABSTRACT:
+                content = result.get("data", "")
+                if not content:
+                    raise BadRequestException("Abstract content is empty")
+                await db.execute(update(Section).where(
+                    Section.id == prompt.source_sections[0]
+                ).values(
+                    content=content,
+                ))
+                section_count += 1
+            else:
+                input_nodes = service._parse_sections_response(user_prompt)
+                sections = result.get("data", [])
+                if len(sections) + len(prompt.source_sections) != len(input_nodes):
+                    raise BadRequestException("Sections count not match input nodes count")
+                section_count += len(sections)
+                header_idx, section_idx = 0, 0
+                for _node in input_nodes:
+                    if _node["level"] > 3:
+                        await db.execute(update(Section).where(
+                            Section.id == prompt.source_sections[header_idx]
+                        ).values(
+                            content=sections[section_idx]["title"],
+                        ))
+                        section_idx += 1
+                    else:
+                        header_idx += 1
             # 更新 Prompt 状态
             prompt.generation_status = "completed"
             await db.commit()
-            return len(sections)
+            return section_count
         except Exception as e:
             prompt.generation_status = "failed"
             await db.commit()

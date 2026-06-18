@@ -137,6 +137,12 @@ class DeepseekService:
                 "data": sections,
                 "duration_ms": duration_ms,
             }
+        if material_type == MaterialType.ABSTRACT:
+            cleaned = self._clean_response(result_text)
+            return {
+                "data": cleaned,
+                "duration_ms": duration_ms,
+            }
         else:
             return {
                 "data": result_text,
@@ -255,6 +261,31 @@ class DeepseekService:
 
         return "".join(content_chunks)
 
+    def _clean_response(self, text: str) -> str:
+        """
+        Clean up the response text by stripping markdown code fences and extra whitespace.
+
+        Args:
+            text (str): The raw response text.
+
+        Returns:
+            str: The cleaned response text.
+        """
+        if not text or not text.strip():
+            logger.warning("Empty response from Deepseek")
+            return ""
+
+        cleaned = text.strip()
+
+        # Strip markdown code fences if present
+        if cleaned.startswith("```"):
+            first_newline = cleaned.index("\n") if "\n" in cleaned else len(cleaned)
+            cleaned = cleaned[first_newline + 1 :]
+            if cleaned.rstrip().endswith("```"):
+                cleaned = cleaned.rstrip()[:-3].rstrip()
+
+        return cleaned
+
     def _parse_sections_response(self, text: str) -> list[dict]:
         """
         Extract and validate the JSON array of sections dicts from Deepseek's response.
@@ -272,20 +303,8 @@ class DeepseekService:
             list[dict]: A list of outline dicts with keys: level, title, order.
         """
         logger.info("_parse_sections_response input (len=%d):\n%s", len(text), text)
-
-        if not text or not text.strip():
-            logger.warning("Empty response from Deepseek")
-            return []
-
-        cleaned = text.strip()
-
-        # Strip markdown code fences if present
-        if cleaned.startswith("```"):
-            first_newline = cleaned.index("\n") if "\n" in cleaned else len(cleaned)
-            cleaned = cleaned[first_newline + 1 :]
-            if cleaned.rstrip().endswith("```"):
-                cleaned = cleaned.rstrip()[:-3].rstrip()
-
+        cleaned = self._clean_response(text)
+        
         # 使用正则表达式解析 heading 标签（使用反向引用确保开闭标签一致）
         # 匹配 <heading1>...</heading1>, <heading2>...</heading2>, <heading3>...</heading3>
         section_pattern = re.compile(
