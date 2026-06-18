@@ -54,10 +54,11 @@ export function Outline() {
    // 项目状态
    const [projectId, setProjectId] = useState<string | null>(null);
    const [loadingProject, setLoadingProject] = useState(false);
+   const projectFetchedRef = useRef(false);
 
    // 获取直接生成大纲的项目ID
    const fetchProject = async () => {
-      if (loadingProject || projectId) return;
+      if (projectId) return;
       setLoadingProject(true);
       try {
             const response = await api.get('/projects/by_name', {
@@ -173,32 +174,28 @@ export function Outline() {
       }
    };
 
-   // 监听 projectId 变化
+   // 监听 promptId 和生成状态变化
    useEffect(() => {
-      if (!projectId) return;
-      fetchDocumentId();
-      fetchDocumentPrompts();
-   }, [projectId]);
-
-   // 监听 promptId 变化
-   useEffect(() => {
-      if (!promptId) return;
+      if (!documentId) return;
       if (isGenerating === false) {
          fetchDocumentSections();
          return;
       }
       const interval = setInterval(() => { fetchDocumentPrompts(); }, 5000);
       return () => clearInterval(interval);
-   }, [promptId]);
+   }, [promptId, isGenerating]);
 
-   // 挂载时获取项目ID
+   // 挂载时获取项目ID（使用 ref 防止 StrictMode 双重调用）
    useEffect(() => {
+      if (projectFetchedRef.current) return;
+      projectFetchedRef.current = true;
       fetchProject();
    }, []);
 
-   // 项目ID就绪后加载模板列表
+   // 项目ID就绪后加载文档列表和模板
    useEffect(() => {
       if (!projectId) return;
+      fetchDocumentId();
 
       const loadTemplates = async () => {
          setLoadingTemplates(true);
@@ -217,6 +214,13 @@ export function Outline() {
       };
       loadTemplates();
    }, [projectId]);
+
+   // 文档ID就绪后加载 prompts 和 sections
+   useEffect(() => {
+      if (!documentId) return;
+      fetchDocumentPrompts();
+      fetchDocumentSections();
+   }, [documentId]);
 
    // 学历变更时更新默认字数
    const handleDegreeChange = (newDegree: string) => {
@@ -240,26 +244,23 @@ export function Outline() {
 
       try {
          const response = await api.post('/outline/generate-direct', {
-            project_id: projectId,  // 直接生成模式，不关联项目
+            project_id: projectId,
             document_id: documentId,
             prompt_id: promptId,
             title,
             outline_prompt: outlinePrompt,
          });
-         // 如果是直接生成模式，且返回了 document_id，更新 documentId
-         // 否则，仍然显示旧的大纲
-         if (response.data.document_id !== documentId) {
-            setDocumentId(response.data.document_id);
-            setPromptId(response.data.prompt_id);
-         } else {
-            fetchDocumentSections();
-         }
+
+         // Update document_id and prompt_id from response to trigger polling
+         setDocumentId(response.data.document_id);
+         setPromptId(response.data.prompt_id);
+         // Polling (useEffect on [promptId, isGenerating]) will monitor
+         // generate_status and call fetchDocumentSections() when complete.
 
       } catch (e: any) {
          console.error(e);
          const msg = getApiErrorMessage(e, '请求失败，请检查网络连接');
          setError(msg);
-      } finally {
          setIsGenerating(false);
       }
    };
@@ -297,28 +298,22 @@ export function Outline() {
          });
 
          const { prompt_id, system_prompt, document_id } = promptResponse.data;
-         
+
          // 将 system_prompt 渲染到 outlinePrompt
          setOutlinePrompt(system_prompt);
          setPromptId(prompt_id);
          setDocumentId(document_id);
          setIsGenerating(true);
 
-         // 第二步：使用 prompt_id 生成大纲
-         const generateResponse = await api.post(`/outline/${prompt_id}/generate`);
+         // 第二步：使用 prompt_id 生成大纲（后端异步执行）
+         await api.post(`/outline/${prompt_id}/generate`);
+         // Polling (useEffect on [promptId, isGenerating]) will monitor
+         // generate_status and call fetchDocumentSections() when complete.
 
-         // 根据返回的 document_id 获取大纲详情
-         if (generateResponse.data.document_id) {
-            const docResponse = await api.get(`/documents/${generateResponse.data.document_id}`);
-            setOutlineResult(docResponse.data.sections || []);
-         } else {
-            setOutlineResult(generateResponse.data.sections || []);
-         }
       } catch (e: any) {
          console.error(e);
          const msg = getApiErrorMessage(e, '请求失败，请检查网络连接');
          setError(msg);
-      } finally {
          setIsGenerating(false);
       }
    };

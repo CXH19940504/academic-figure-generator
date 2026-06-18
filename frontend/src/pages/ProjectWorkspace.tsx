@@ -158,6 +158,7 @@ export function ProjectWorkspace() {
 
     // Per-image features
     const [colorSchemes, setColorSchemes] = useState<any[]>([]);
+    const colorSchemesFetchedRef = useRef(false);
     const [editInstructions, setEditInstructions] = useState<Record<string, string>>({});
     const [isEditing, setIsEditing] = useState<Record<string, boolean>>({});
     const [promptSettings, setPromptSettings] = useState<Record<string, PromptSettings>>({});
@@ -186,7 +187,10 @@ export function ProjectWorkspace() {
         if (id) {
             fetchProjectData(id, { showLoader: true });
         }
-        return () => setCurrentProject(null);
+        return () => {
+            setCurrentProject(null);
+            colorSchemesFetchedRef.current = false;
+        };
     }, [id]);
 
     useEffect(() => {
@@ -358,11 +362,13 @@ export function ProjectWorkspace() {
                 console.debug('Failed to fetch images', e);
             }
             // 初始化颜色方案
-            if (colorSchemes.length === 0) {
+            if (!colorSchemesFetchedRef.current) {
+                colorSchemesFetchedRef.current = true;
                 try {
                     const schemesRes = await api.get('/color-schemes/');
                     setColorSchemes(schemesRes.data || []);
                 } catch (e) {
+                    colorSchemesFetchedRef.current = false;
                     console.debug('Failed to fetch color schemes', e);
                 }
             }

@@ -89,6 +89,7 @@ class OutlineGenerateResponse(BaseModel):
     data: dict | None = None
     document_id: str = ""
     project_id: str | None = None
+    prompt_id: str = ""
     duration_ms: int
 
 

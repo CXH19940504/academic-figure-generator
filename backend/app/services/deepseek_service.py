@@ -16,8 +16,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-
-from app.models.prompt import Prompt
 from app.schemas.common import MaterialType
 import httpx
 
@@ -290,18 +288,17 @@ class DeepseekService:
 
         # 使用正则表达式解析 heading 标签（使用反向引用确保开闭标签一致）
         # 匹配 <heading1>...</heading1>, <heading2>...</heading2>, <heading3>...</heading3>
-        heading_pattern = re.compile(
-            r"<heading([1-3])>(.*?)</heading\1>(?:\s*<section>(.*?)</section>)?",
+        section_pattern = re.compile(
+            r"<(heading[1-3]|section)>(.*?)</\1>?",
             re.DOTALL
         )
 
         outline: list[dict] = []
         order = 0
 
-        for match in heading_pattern.finditer(cleaned):
-            level = int(match.group(1))  # 1, 2, or 3
+        for match in section_pattern.finditer(cleaned):
+            level = int(match.group(1).split("heading")[1]) if match.group(1).startswith("heading") else 4  # 1, 2, or 3
             title = match.group(2).strip()
-            content = match.group(3).strip() if match.group(3) else ""
             
             if not title:
                 logger.warning("Empty title for heading%d at position %d", level, match.start())
@@ -312,7 +309,6 @@ class DeepseekService:
                 "level": level,
                 "title": title,
                 "order": order,
-                "content": content,
             })
 
         if not outline:
@@ -335,7 +331,6 @@ class DeepseekService:
                 "level": section.get("level", 1),
                 "title": section.get("title", f"Section {i + 1}"),
                 "order": section.get("order", i + 1),
-                "content": section.get("content", ""),
             }
             if not validated["title"]:
                 logger.warning("Skipping section %d: empty title", validated["order"])
