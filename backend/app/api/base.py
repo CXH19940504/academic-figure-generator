@@ -4,10 +4,11 @@ from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import NotFoundException
 from app.models.color_scheme import ColorScheme
-from app.models.document import Document
+from app.models.document import Document, Section
 from app.models.prompt import Prompt
 from app.models.project import Project
 from app.models.project import Template
+from app.schemas.common import MaterialType
 
 
 async def get_project_from_db(project_id: str, db: AsyncSession) -> Project:

@@ -53,6 +53,8 @@ export function ProjectWorkspace() {
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [documents, setDocuments] = useState<DocumentItem[]>([]);
     const [documentId, setDocumentId] = useState<string | null>(null);
+    const documentIdRef = useRef<string | null>(null);
+    documentIdRef.current = documentId;  // keep ref in sync for async callbacks
     const [sections, setSections] = useState<SectionItem[]>([]);
     const [prompts, setPrompts] = useState<any[]>([]);
     const [images, setImages] = useState<any[]>([]);
@@ -193,13 +195,25 @@ export function ProjectWorkspace() {
         };
     }, [id]);
 
+    // Auto-select the first parsed document when the list loads and nothing is selected
+    useEffect(() => {
+        if (documentIdRef.current) return;                      // already selected
+        if (!documents.length) return;                          // no documents yet
+        const firstParsed = documents.find(
+            (d) => d.parse_status === 'completed' && Array.isArray(d.sections) && d.sections.length > 0
+        );
+        if (firstParsed?.id) {
+            setDocumentId(firstParsed.id);
+        }
+    }, [documents]);
+
     useEffect(() => {
         if (!documentId) return;
         const parsedDoc = documents.find(doc => doc.id === documentId);
         if (!parsedDoc) return;
         fetchDocumentPrompts();
         fetchSections();
-        fetchImagesPrompts();
+        fetchFigurePrompts();
     }, [documentId]);
 
     useEffect(() => {
@@ -252,36 +266,50 @@ export function ProjectWorkspace() {
         }
     };
 
-    const fetchImagesPrompts = async () => {
+    /** Fetch figure prompts once (no polling) — used on initial load / document switch. */
+    const fetchFigurePrompts = async () => {
         if (!id || !documentId) return;
-        
-        // Poll until new prompts appear
+        try {
+            const promptsRes = await api.get(`/documents/${documentId}/prompts`, {
+                params: { material_type: 6 },
+            });
+            setPrompts(promptsRes.data || []);
+        } catch (err) {
+            console.error('Failed to fetch figure prompts:', err);
+        }
+    };
+
+    /** Poll for new figure prompts after an auto-generate request. */
+    const pollForNewPrompts = async () => {
+        if (!id || !documentId) return;
+
         const beforeCount = prompts.length;
-        let newPrompts: any[] = [];
         const deadline = Date.now() + 90_000;
         while (Date.now() < deadline) {
             await new Promise((r) => setTimeout(r, 2000));
             const promptsRes = await api.get(`/documents/${documentId}/prompts`, {
-                params: {
-                    material_type: 6,
-                },
+                params: { material_type: 6 },
             });
             const next = promptsRes.data || [];
             setPrompts(next);
             if (next.length > beforeCount) {
-                newPrompts = next.slice(beforeCount);
+                const newPrompts = next.slice(beforeCount);
+                // Initialize per-prompt default settings so selectors have values
+                for (const prompt of newPrompts) {
+                    const aspectRatio = prompt.suggested_aspect_ratio || '16:9';
+                    const cs = currentProject?.color_scheme || 'okabe-ito';
+                    setPromptSettings(prev => ({
+                        ...prev,
+                        [prompt.id]: { resolution: '2K', aspectRatio, colorScheme: cs },
+                    }));
+                }
                 break;
             }
-        }
-
-        // Initialize per-prompt default settings so selectors have values
-        for (const prompt of newPrompts) {
-            const aspectRatio = prompt.suggested_aspect_ratio || '16:9';
-            const cs = currentProject?.color_scheme || 'okabe-ito';
-            setPromptSettings(prev => ({
-                ...prev,
-                [prompt.id]: { resolution: '2K', aspectRatio, colorScheme: cs },
-            }));
+            // If we've gotten responses and they're consistently empty, stop early
+            // (no figure prompts exist for this document)
+            if (next.length === 0 && beforeCount === 0) {
+                break;
+            }
         }
     };
 
@@ -304,22 +332,24 @@ export function ProjectWorkspace() {
 
     // Poll while any document is still parsing (including OCR)
     useEffect(() => {
-        if (!id || !documentId) return;
+        if (!id || !documentIdRef.current) return;
         const hasParsing = Object.values(generatingPrompts).some(pid => pid === true);
         if (!hasParsing) return;
         const interval = setInterval(() => { fetchDocumentPrompts(); }, 4000);
         return () => clearInterval(interval);
     }, [generatingPrompts, id]);
 
-    const fetchDocumentsData = async () => {
-        if (!id) return;
+    const fetchDocumentsData = async (): Promise<DocumentItem[]> => {
+        if (!id) return [];
         try {
             const docsRes = await api.get(`/projects/${id}/documents`);
-            const nextDocs = docsRes.data || [];
+            const nextDocs: DocumentItem[] = docsRes.data || [];
             setDocuments(nextDocs);
+            return nextDocs;
         } catch (e) {
             console.debug('Failed to fetch documents', e);
             setDocuments([]);
+            return [];
         }
     };
 
@@ -333,16 +363,14 @@ export function ProjectWorkspace() {
                 setCurrentProject(projRes.data);
             }
             
-            if (!documentId) {
-                // 获取 文档列表信息
+            if (!documentIdRef.current) {
+                // 获取文档列表，使用返回值避免 stale closure
                 try {
-                    await fetchDocumentsData();
-                    // 刷新时，不改变documentId，只刷新documents信息
-                    const firstParsed = documents.find(
+                    const freshDocs = await fetchDocumentsData();
+                    const firstParsed = freshDocs.find(
                         (d: any) => d.parse_status === 'completed' && Array.isArray(d.sections) && d.sections.length > 0
                     );
-                    if (firstParsed?.id) 
-                    {
+                    if (firstParsed?.id) {
                         setDocumentId(firstParsed.id);
                         if (sections.length && selectedSectionIndices.length === 0) {
                             setSelectedSectionIndices(sections.map((_: any, idx: number) => idx));
@@ -474,8 +502,8 @@ export function ProjectWorkspace() {
 
             await api.post(`/projects/${id}/prompts/generate`, payload);
 
-            // 更新图片生成的prompts
-            await fetchImagesPrompts();
+            // Poll until the newly-generated figure prompts appear
+            await pollForNewPrompts();
 
             // Refresh to pick up image records
             await fetchProjectData(id, { showLoader: false });
