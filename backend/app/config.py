@@ -34,13 +34,37 @@ class Settings(BaseSettings):
     DEEPSEEK_API_BASE: str = getenv("DEEPSEEK_API_BASE", "https://api.deepseek.cn/v1")
     DEEPSEEK_MODEL: str = getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
 
-    # NanoBanana / Gemini image generation API (env vars: NANOBANANA_API_KEY, NANOBANANA_API_BASE, NANOBANANA_MODEL)
+    # NanoBanana / Gemini image generation API
+    # (env vars: NANOBANANA_API_KEY, NANOBANANA_API_BASE, NANOBANANA_MODEL)
     NANOBANANA_API_KEY: str = getenv("NANOBANANA_API_KEY", "")
     NANOBANANA_API_BASE: str = getenv("NANOBANANA_API_BASE", "https://api.keepgo.icu")
     NANOBANANA_MODEL: str = getenv("NANOBANANA_MODEL", "gemini-3-pro-image-preview")
 
     # CORS
-    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:8081"]
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:8081",
+    ]
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def _parse_cors_origins(cls, value: object) -> list[str]:
+        """Parse CORS_ORIGINS from env var (JSON array string or comma-separated)."""
+        if isinstance(value, list):
+            return list(value)
+        if isinstance(value, str):
+            value = value.strip()
+            if value.startswith("["):
+                try:
+                    import json
+
+                    return json.loads(value)
+                except json.JSONDecodeError:
+                    pass
+            # Fallback: comma-separated
+            _origins = [o.strip().rstrip("/") for o in value.split(",") if o.strip()]
+            return _origins or ["http://localhost:3000", "http://localhost:8081"]
+        return ["http://localhost:3000", "http://localhost:8081"]
 
     # Upload
     MAX_UPLOAD_SIZE_MB: int = 50

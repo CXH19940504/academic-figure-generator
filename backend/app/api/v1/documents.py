@@ -3,7 +3,7 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter, Depends, UploadFile
+from fastapi import APIRouter, Depends, Form, UploadFile
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,7 +54,7 @@ async def list_project_documents(
 async def upload_document(
     project_id: str,
     file: UploadFile,
-    data: DocumentCreate,
+    data: str = Form(),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload a document to a project.
@@ -62,6 +62,7 @@ async def upload_document(
     Accepts DOCX or TXT files. The file is stored locally and parsed
     synchronously (inline).
     """
+    data_obj = DocumentCreate.model_validate_json(data)
     project = await get_project_from_db(project_id, db)
 
     contents = await file.read()
@@ -81,11 +82,11 @@ async def upload_document(
     # Create DB record with new fields
     document = Document(
         project_id=project.id,
-        uuid=data.uuid,
-        title=data.title,
-        paper_type=data.paper_type,
-        subject_code=data.subject_code,
-        template_id=data.template_id,
+        uuid=data_obj.uuid,
+        title=data_obj.title,
+        paper_type=data_obj.paper_type,
+        subject_code=data_obj.subject_code,
+        template_id=data_obj.template_id,
         original_filename=original_filename,
         file_type=file_type,
         file_size_bytes=file_size,
@@ -466,11 +467,15 @@ async def create_sections_prompt(
     await db.flush()
 
     # 3. 合并所有子章节
+    if not data.section_indices:
+        raise BadRequestException("section_indices must not be empty")
     update_paragraphs = []
     paragraph: list[Section] = []
     sectionDict = {section.id: section for section in document.sections}
     for section_id in data.section_indices:
-        section = sectionDict[section_id]
+        section = sectionDict.get(section_id)
+        if section is None:
+            raise BadRequestException(f"Section with id {section_id} not found in document {document.id}")
         if not paragraph or section.level >= paragraph[-1].level:
             paragraph.append(section)
         else:
@@ -483,14 +488,14 @@ async def create_sections_prompt(
                 len(update_paragraphs), len(data.section_indices))
 
     # 4. 构建 prompt
-    exist_cnt = await db.execute(
+    exist_cnt = (await db.execute(
         select(func.count())
         .select_from(Prompt)
         .where(
             Prompt.document_id == document.id,
             Prompt.material_type != MaterialType.FIGURE.value,
         )
-    ).scalar_one()
+    )).scalar_one()
     # 5. 构建 prompt
     prompt_prompts = {}
     params = {
@@ -597,7 +602,14 @@ async def _generate_sections(prompt_id: str):
                 if prompt.material_type == MaterialType.ABSTRACT:
                     sections = result.get("data", [])
                     if not sections:
-                        raise BadRequestException("Abstract content is empty")
+                        raw_text = result.get("raw_text", "")
+                        if not raw_text or not raw_text.strip():
+                            raise BadRequestException("Abstract content is empty")
+                        logger.warning(
+                            "Abstract parsing returned empty, using raw_text as fallback (len=%d)",
+                            len(raw_text),
+                        )
+                        sections = [{"level": 4, "title": raw_text.strip(), "order": 1}]
                     await db.execute(update(Section).where(
                         Section.id == prompt.source_sections[0]
                     ).values(

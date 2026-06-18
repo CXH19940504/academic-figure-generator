@@ -40,10 +40,11 @@ class TestParseSectionsResponse:
 
         sections = self.service._parse_sections_response(text)
 
-        assert len(sections) == 5
-        # Verify each section
-        assert sections[0] == {"level": 1, "title": "摘要", "order": 1, "content": "", "material_type": MaterialType.ABSTRACT.value}
-        assert sections[1] == {"level": 1, "title": "绪论", "order": 2, "content": "", "material_type": MaterialType.SECTION.value}
-        assert sections[2] == {"level": 2, "title": "研究背景与意义", "order": 3, "content": "", "material_type": MaterialType.SECTION.value}
-        assert sections[3] == {"level": 3, "title": "行业发展现状", "order": 4, "content": "这是行业现状现状的详细内容", "material_type": MaterialType.SECTION.value}
-        assert sections[4] == {"level": 3, "title": "研究的必要性", "order": 5, "content": "", "material_type": MaterialType.SECTION.value}
+        assert len(sections) == 6
+        # Verify each section — <section> tags produce level-4 items, not merged into preceding headings
+        assert sections[0] == {"level": 1, "title": "摘要", "order": 1, "material_type": MaterialType.ABSTRACT.value}
+        assert sections[1] == {"level": 1, "title": "绪论", "order": 2, "material_type": MaterialType.INTRODUCTION.value}
+        assert sections[2] == {"level": 2, "title": "研究背景与意义", "order": 3}
+        assert sections[3] == {"level": 3, "title": "行业发展现状", "order": 4}
+        assert sections[4] == {"level": 4, "title": "这是行业现状现状的详细内容", "order": 5}
+        assert sections[5] == {"level": 3, "title": "研究的必要性", "order": 6}

@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 def setup_cors(app: FastAPI) -> None:
     """Add CORS middleware using origins from settings."""
     settings = get_settings()
+    logger.info("CORS allowed origins: %s", settings.CORS_ORIGINS)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS,

@@ -228,12 +228,19 @@ export function ProjectWorkspace() {
         if (documentIdRef.current) return;                      // already selected
         if (!documents.length) return;                          // no documents yet
         const firstParsed = documents.find(
-            (d) => d.parse_status === 'completed' && Array.isArray(d.sections) && d.sections.length > 0
+            (d) => d.parse_status === 'completed'
         );
         if (firstParsed?.id) {
             setDocumentId(firstParsed.id);
         }
     }, [documents]);
+
+    // Reset section state when switching documents
+    useEffect(() => {
+        structureInitRef.current = null;
+        setSections([]);
+        setCollapsedGroups({});
+    }, [documentId]);
 
     useEffect(() => {
         if (!documentId) return;
@@ -255,7 +262,6 @@ export function ProjectWorkspace() {
         for (const r of roots) next[`sec-${r.idx}`] = true; // default collapsed: only show chapters
         setCollapsedGroups(next);
         structureInitRef.current = documentId;
-        return () => setSections([]);
     }, [sections, documentId]);
     
     const fetchDocumentPrompts = async () => {
@@ -397,12 +403,12 @@ export function ProjectWorkspace() {
                 try {
                     const freshDocs = await fetchDocumentsData();
                     const firstParsed = freshDocs.find(
-                        (d: any) => d.parse_status === 'completed' && Array.isArray(d.sections) && d.sections.length > 0
+                        (d: any) => d.parse_status === 'completed'
                     );
                     if (firstParsed?.id) {
                         setDocumentId(firstParsed.id);
                         if (sections.length && selectedSectionIndices.length === 0) {
-                            setSelectedSectionIndices(sections.map((_: any, idx: number) => idx));
+                            setSelectedSectionIndices(sections.map((sec: any, idx: number) => typeof sec?.id === 'number' ? sec.id : idx));
                         }
                     }
                 } catch (e) {
@@ -467,6 +473,12 @@ export function ProjectWorkspace() {
         setUploadProgress(0);
         const formData = new FormData();
         formData.append('file', file);
+        formData.append('data', JSON.stringify({
+            uuid: '',
+            title: file.name.replace(/\.[^/.]+$/, ''),
+            paper_type: 1,
+            subject_code: currentProject?.subject_code || '08',
+        }));
 
         try {
             await api.post(`/projects/${id}/documents`, formData, {
@@ -693,7 +705,7 @@ export function ProjectWorkspace() {
         }
 
         const roots = buildSectionTree(sections);
-        const allIndices = sections.map((_, idx) => idx);
+        const allIndices = sections.map((sec, idx) => typeof sec?.id === 'number' ? sec.id : idx);
         const selectedSet = new Set(selectedSectionIndices);
 
         const selectMany = (indices: number[], checked: boolean) => {
@@ -1507,7 +1519,7 @@ export function ProjectWorkspace() {
                                         if (promptViewer.prompt_id && promptEditContent) {
                                             try {
                                                 // 调用API更新edited_prompt
-                                                await api.post(`/prompts/${promptViewer.prompt_id}`, {
+                                                await api.put(`/prompts/${promptViewer.prompt_id}`, {
                                                     edited_prompt: promptEditContent
                                                 });
                                                 // 更新本地状态

@@ -136,6 +136,7 @@ class DeepseekService:
             return {
                 "data": sections,
                 "duration_ms": duration_ms,
+                "raw_text": result_text,
             }
         else:
             return {
