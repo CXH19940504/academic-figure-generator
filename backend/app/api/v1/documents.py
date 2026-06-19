@@ -24,7 +24,7 @@ from app.schemas.common import MaterialType, PaperType
 from app.schemas.document import (
     DocumentCreate, DocumentResponse, OutlineGenerateRequest, OutlineGenerateResponse,
     OutlinePromptCreateRequest, OutlinePromptResponse, SectionGenerateRequest, SectionGenerateResponse,
-    SectionPromptRequest, SectionPromptResponse, SectionsResponse
+    SectionPromptRequest, SectionPromptResponse, SectionsResponse, SectionUpdateRequest
 )
 from app.services.local_storage_service import LocalStorageService
 from app.services.deepseek_service import DeepseekService
@@ -698,6 +698,52 @@ async def _generate_sections(prompt_id: str):
                 raise
 
     raise last_exception  # type: ignore[misc]
+
+
+@router.put("/sections/{section_id}", response_model=dict)
+async def update_section(
+    section_id: int,
+    data: SectionUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """更新指定章节的标题、内容或级别。
+
+    Args:
+        section_id: Section ID.
+        data: Update data with optional title, content, level.
+        db: Database session.
+
+    Returns:
+        Success message.
+    """
+    # 获取现有的 section
+    result = await db.execute(select(Section).where(Section.id == section_id))
+    section = result.scalar_one_or_none()
+
+    if not section:
+        raise NotFoundException(f"Section with id {section_id} not found")
+
+    # 更新字段
+    if data.title is not None:
+        section.title = data.title
+    if data.content is not None:
+        section.content = data.content
+    if data.level is not None:
+        section.level = data.level
+
+    await db.flush()
+    await db.refresh(section)
+
+    return {
+        "success": True,
+        "message": "Section updated successfully",
+        "section": {
+            "id": section.id,
+            "title": section.title,
+            "content": section.content,
+            "level": section.level,
+        }
+    }
 
 
 @router.post("/sections/generate", response_model=SectionGenerateResponse)

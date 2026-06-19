@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from app.api.base import get_project_from_db
+from app.api.base import get_project_from_db, get_project_or_create_from_db
 from app.config import get_settings
 from app.core.exceptions import BadRequestException, ExternalAPIException, NotFoundException
 from app.dependencies import get_db
@@ -231,26 +231,8 @@ async def generate_image_direct(
     if not settings.NANOBANANA_API_KEY:
         raise BadRequestException("NANOBANANA_API_KEY not configured. Set it in .env file.")
 
-    if project_id is None:
-        # Auto-create or reuse a default project
-        result = await db.execute(
-            select(Project).where(
-                Project.name == "直接生成",
-                Project.status == "active",
-            )
-        )
-        project = result.scalar_one_or_none()
-        if project is None:
-            project = Project(
-                name="直接生成",
-                description="通过直接生成模式创建的图片",
-            )
-            db.add(project)
-            await db.flush()
-            await db.refresh(project)
-        project_id = project.id
-    else:
-        await get_project_from_db(project_id, db)
+    project = await get_project_or_create_from_db(project_id, db, "直接生成图片")
+    project_id = project.id
 
     image = Image(
         prompt_id=None,

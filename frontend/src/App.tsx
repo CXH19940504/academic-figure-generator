@@ -19,6 +19,7 @@ function App() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/generate" element={<Generate />} />
           <Route path="/outline" element={<Outline />} />
+          <Route path="/outline/:projectId" element={<Outline />} />
         </Route>
       </Routes>
     </Router>

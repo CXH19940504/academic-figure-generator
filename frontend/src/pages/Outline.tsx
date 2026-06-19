@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Textarea } from '../components/ui/textarea';
@@ -45,37 +46,71 @@ const DEGREES = [
 const WORD_COUNTS = [8000, 10000, 15000, 20000, 30000, 50000];
 
 interface OutlineItem {
+   id?: number;
    level: number;
    title: string;
    order: number;
 }
 
 export function Outline() {
+   // 路由参数
+   const { projectId: urlProjectId } = useParams<{ projectId?: string }>();
+   const navigate = useNavigate();
+   
    // 项目状态
    const [projectId, setProjectId] = useState<string | null>(null);
    const [loadingProject, setLoadingProject] = useState(false);
+   const [projectExists, setProjectExists] = useState(true);
    const projectFetchedRef = useRef(false);
+
+   // 校验项目是否存在
+   const validateProject = async (id: string) => {
+      setLoadingProject(true);
+      try {
+         const response = await api.get(`/projects/${id}`);
+         if (response.data) {
+            setProjectExists(true);
+            setProjectId(id);
+         }
+      } catch (error) {
+         console.error('Project not found:', error);
+         setProjectExists(false);
+      } finally {
+         setLoadingProject(false);
+      }
+   };
 
    // 获取直接生成大纲的项目ID
    const fetchProject = async () => {
-      if (projectId) return;
       setLoadingProject(true);
       try {
-            const response = await api.get('/projects/by_name', {
-               params: {
-                  name: '直接生成大纲',
-               },
-            });
-            if (response.data && response.data.id) {
-               setProjectId(response.data.id);
-            }
+         const response = await api.get('/projects/by_name', {
+            params: {
+               name: '直接生成大纲',
+            },
+         });
+         if (response.data && response.data.id) {
+            navigate(`/outline/${response.data.id}`, { replace: true });
+         }
       } catch (error) {
-            // 忽略错误，使用null项目ID
-            setProjectId(null);
+         console.error('Failed to fetch project:', error);
+         setProjectId(null);
       } finally {
-            setLoadingProject(false);
+         setLoadingProject(false);
       }
    };
+
+   // 初始化：根据URL参数决定是校验项目还是获取项目
+   useEffect(() => {
+      if (projectFetchedRef.current) return;
+      projectFetchedRef.current = true;
+
+      if (urlProjectId) {
+         validateProject(urlProjectId);
+      } else {
+         fetchProject();
+      }
+   }, [urlProjectId]);
 
    // 表单状态
    const [title, setTitle] = useState('');
@@ -98,6 +133,10 @@ export function Outline() {
    const [loadingDocuments, setLoadingDocuments] = useState(false);
    const [documentId, setDocumentId] = useState<string | null>(null);
    const [promptId, setPromptId] = useState<string | null>(null);
+   
+   // 编辑状态
+   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+   const [editingTitle, setEditingTitle] = useState<string>('');
 
    // 获取项目文档
    const fetchDocumentId = async () => {
@@ -320,6 +359,28 @@ export function Outline() {
       }
    };
 
+   // 更新大纲标题
+   const handleUpdateOutlineTitle = async (sectionId: number, newTitle: string) => {
+      try {
+         await api.put(`/sections/${sectionId}`, { title: newTitle });
+         // 更新本地状态
+         setOutlineResult(prev => {
+            if (!prev) return prev;
+            return prev.map((item, idx) => {
+               if (idx === editingIndex) {
+                  return { ...item, title: newTitle };
+               }
+               return item;
+            });
+         });
+         setEditingIndex(null);
+         setEditingTitle('');
+      } catch (error) {
+         console.error('Failed to update section title:', error);
+         alert('更新失败，请稍后重试');
+      }
+   };
+
    // 复制单个大纲条目
    const handleCopyOutline = useCallback(async (text: string, index: number) => {
       try {
@@ -381,6 +442,18 @@ export function Outline() {
    return (
       <div className="max-w-6xl mx-auto space-y-6">
          <div>
+            <div className="flex items-center gap-2 mb-2">
+               {projectId && (
+                  <a 
+                     href={`/projects/${projectId}`}
+                     className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1"
+                     onClick={(e) => { e.preventDefault(); navigate(`/projects/${projectId}`); }}
+                  >
+                     <span>←</span>
+                     <span>论文主体结构</span>
+                  </a>
+               )}
+            </div>
             <h1 className="text-3xl font-bold tracking-tight">论文大纲生成</h1>
             <p className="text-muted-foreground mt-1">输入论文信息，AI智能生成结构化论文大纲。</p>
          </div>
@@ -621,26 +694,75 @@ export function Outline() {
                         <div className="space-y-1 overflow-auto max-h-[500px] p-2">
                            {outlineResult.map((item, index) => {
                               const styles = getLevelStyles(item.level);
+                              const isEditing = editingIndex === index;
                               return (
                                  <div
                                     key={index}
                                     className={`flex items-start gap-2 p-2 rounded-md hover:bg-background/80 transition-colors group ${styles.indent}`}
                                  >
-                                    <span className={`${styles.fontWeight} ${styles.fontSize} text-foreground flex-1 leading-relaxed`}>
-                                       {item.title}
-                                    </span>
-                                    <Button
-                                       variant="ghost"
-                                       size="sm"
-                                       className="opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6 p-0"
-                                       onClick={() => handleCopyOutline(`${item.title}`, index)}
-                                    >
-                                       {copiedIndex === index ? (
-                                          <Check className="w-3 h-3 text-green-500" />
-                                       ) : (
-                                          <Copy className="w-3 h-3 text-muted-foreground" />
-                                       )}
-                                    </Button>
+                                    {isEditing ? (
+                                       <>
+                                          <input
+                                             type="text"
+                                             value={editingTitle}
+                                             onChange={(e) => setEditingTitle(e.target.value)}
+                                             onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                   item.id && handleUpdateOutlineTitle(item.id, editingTitle);
+                                                } else if (e.key === 'Escape') {
+                                                   setEditingIndex(null);
+                                                   setEditingTitle('');
+                                                }
+                                             }}
+                                             className="flex-1 px-2 py-1 border rounded text-sm"
+                                             autoFocus
+                                          />
+                                          <Button
+                                             size="sm"
+                                             variant="ghost"
+                                             className="h-6 w-6 p-0"
+                                             onClick={() => item.id && handleUpdateOutlineTitle(item.id, editingTitle)}
+                                          >
+                                             <Check className="w-3 h-3 text-green-500" />
+                                          </Button>
+                                          <Button
+                                             size="sm"
+                                             variant="ghost"
+                                             className="h-6 w-6 p-0"
+                                             onClick={() => {
+                                                setEditingIndex(null);
+                                                setEditingTitle('');
+                                             }}
+                                          >
+                                             <AlertCircle className="w-3 h-3 text-red-500" />
+                                          </Button>
+                                       </>
+                                    ) : (
+                                       <>
+                                          <span className={`${styles.fontWeight} ${styles.fontSize} text-foreground flex-1 leading-relaxed cursor-pointer`}
+                                             onClick={() => {
+                                                if (item.id) {
+                                                   setEditingIndex(index);
+                                                   setEditingTitle(item.title);
+                                                }
+                                             }}
+                                          >
+                                             {item.title}
+                                          </span>
+                                          <Button
+                                             variant="ghost"
+                                             size="sm"
+                                             className="opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6 p-0"
+                                             onClick={() => handleCopyOutline(`${item.title}`, index)}
+                                          >
+                                             {copiedIndex === index ? (
+                                                <Check className="w-3 h-3 text-green-500" />
+                                             ) : (
+                                                <Copy className="w-3 h-3 text-muted-foreground" />
+                                             )}
+                                          </Button>
+                                       </>
+                                    )}
                                     <span className={`text-xs px-1 py-0.5 rounded bg-muted text-muted-foreground ${styles.fontWeight}`}>
                                        {getLevelLabel(item.level)}
                                     </span>

@@ -1,6 +1,5 @@
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import NotFoundException
 from app.models.color_scheme import ColorScheme
@@ -13,7 +12,8 @@ from app.schemas.common import MaterialType
 
 async def get_project_from_db(project_id: str, db: AsyncSession) -> Project:
     """Get project by ID, raise NotFoundException if not found or deleted."""
-    result = await db.execute(select(Project).where(Project.id == project_id))
+    result = await db.execute(select(Project).where(
+        Project.id == project_id, Project.status == "active"))
     project: Project | None = result.scalar_one_or_none()
     if project is None or project.status == "deleted":
         raise NotFoundException("Project not found")

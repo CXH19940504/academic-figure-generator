@@ -144,3 +144,10 @@ class SectionGenerateResponse(BaseModel):
     success: bool = True
     message: str = "Sections generated successfully"
     section_count: int = Field(default=0, description="Number of successfully generated sections")
+
+
+class SectionUpdateRequest(BaseModel):
+    """更新章节的请求"""
+    title: Optional[str] = Field(None, description="章节标题")
+    content: Optional[str] = Field(None, description="章节内容")
+    level: Optional[int] = Field(None, description="章节级别")

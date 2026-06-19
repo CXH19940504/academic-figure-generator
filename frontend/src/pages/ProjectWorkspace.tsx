@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { FileUp, FileText, Image as ImageIcon, Send, RefreshCw, Download, ChevronLeft, ChevronRight, ScanText, FileDown, AlertCircle, CheckCircle2, Loader2, Eye, Copy } from 'lucide-react';
+import { FileUp, FileText, Image as ImageIcon, Send, RefreshCw, Download, ChevronLeft, ChevronRight, ScanText, FileDown, AlertCircle, CheckCircle2, Loader2, Eye, Copy, Wand2 } from 'lucide-react';
 
 import api from '../lib/api';
 import { useProjectStore } from '../store/projectStore';
@@ -1000,7 +1000,15 @@ export function ProjectWorkspace() {
                         </div>
                     </CardHeader>
                     <CardContent className="flex-1 overflow-hidden p-0 flex flex-col">
-                        <div className="px-4 py-2 border-b bg-background shrink-0">
+                        <div className="px-4 py-2 border-b bg-background shrink-0 flex items-center gap-2">
+                            <Button
+                                size="sm"
+                                className="bg-blue-600 hover:bg-blue-700 text-white shrink-0"
+                                onClick={() => navigate(`/outline/${id}`)}
+                            >
+                                <Wand2 className="w-4 h-4 mr-1" />
+                                生成大纲
+                            </Button>
                             <Select
                                 value={documentId}
                                 onValueChange={(value) => {
@@ -1010,8 +1018,11 @@ export function ProjectWorkspace() {
                                 }}
                                 disabled={documents.length === 0}
                             >
-                                <SelectTrigger className="w-full">
-                                    <SelectValue placeholder="选择文档" />
+                                <SelectTrigger className="w-full disabled:opacity-100">
+                                    <SelectValue 
+                                        placeholder={documents.length === 0 ? "请通过生成大纲/上传文档，添加文档" : "选择文档"} 
+                                        className={documents.length === 0 ? "text-muted-foreground" : ""}
+                                    />
                                 </SelectTrigger>
                                 <SelectContent>
                                     {documents.map((doc) => (
@@ -1157,6 +1168,7 @@ export function ProjectWorkspace() {
                             <Button
                                 variant="outline"
                                 size="sm"
+                                className="bg-blue-600 hover:bg-blue-700 text-white border-blue-600"
                                 onClick={() => fileInputRef.current?.click()}
                                 disabled={isUploading}
                             >
@@ -1471,7 +1483,7 @@ export function ProjectWorkspace() {
         }}>
             <DialogContent className="max-w-2xl max-h-[85vh]">
                 <DialogHeader>
-                    <DialogTitle>{promptViewer.prompt_id ? '提示词内容' : '生成正文的 Prompt'}</DialogTitle>
+                    <DialogTitle>{promptViewer.prompt_id ? '提示词内容' : '生成配图的 Prompt'}</DialogTitle>
                 </DialogHeader>
                 <div className="space-y-3">
                     {promptViewer.title && (
@@ -1488,6 +1500,17 @@ export function ProjectWorkspace() {
                             <pre className="whitespace-pre-wrap text-sm bg-muted p-4 rounded-md max-h-[55vh] overflow-y-auto text-foreground/85 leading-relaxed">
                                 {promptViewer.content || '暂无 Prompt 内容'}
                             </pre>
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                className="absolute top-2 right-2"
+                                onClick={() => {
+                                    navigator.clipboard.writeText(promptViewer.content);
+                                }}
+                            >
+                                <Copy className="mr-1 h-3 w-3" />
+                                复制
+                            </Button>
                         </div>
                     )}
                     <div className="flex gap-2 justify-end">
