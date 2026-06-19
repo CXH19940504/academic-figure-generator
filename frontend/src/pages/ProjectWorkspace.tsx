@@ -934,7 +934,7 @@ export function ProjectWorkspace() {
 
     return (
         <>
-            <div className="h-[calc(140vh-6rem)] flex gap-4 overflow-hidden">
+            <div className="h-[calc(110vh-6rem)] flex gap-4 overflow-hidden">
 
             {/* Column 1: Parsed Structure (primary) */}
             {showStructure ? (
@@ -1026,6 +1026,18 @@ export function ProjectWorkspace() {
                             {renderParsedStructure()}
                         </div>
                     </CardContent>
+                    <CardFooter className="p-4 border-t bg-muted/10 flex gap-2">
+                        <Button className="flex-1 font-semibold" onClick={handleAutoGenerate} disabled={isAutoGenerating}>
+                            {isAutoGenerating ? (
+                                <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> 生成配图中...</>
+                            ) : (
+                                <><Send className="w-4 h-4 mr-2" /> 生成配图</>
+                            )}
+                        </Button>
+                        <Button className="flex-1 font-semibold bg-white text-black hover:bg-gray-100 border border-gray-200" onClick={handleGenerateContentWithPrompt}>
+                            生成正文
+                        </Button>
+                    </CardFooter>
                 </Card>
             ) : (
                 <div className="h-full w-10 shrink-0 flex items-center justify-center border rounded bg-card">
@@ -1141,15 +1153,16 @@ export function ProjectWorkspace() {
                         </div>
 
                         <div className="p-4 border-b">
-                            <div
-                                className="border-2 border-dashed rounded-lg p-4 text-center hover:bg-muted/50 transition-colors cursor-pointer"
+                            <input type="file" ref={fileInputRef} className="hidden" accept=".pdf,.docx,.txt" onChange={handleFileUpload} />
+                            <Button
+                                variant="outline"
+                                size="sm"
                                 onClick={() => fileInputRef.current?.click()}
+                                disabled={isUploading}
                             >
-                                <input type="file" ref={fileInputRef} className="hidden" accept=".pdf,.docx,.txt" onChange={handleFileUpload} />
-                                <FileUp className="w-6 h-6 mx-auto text-muted-foreground mb-2" />
-                                <p className="text-xs font-medium">点击或拖拽以上传</p>
-                                <p className="text-[10px] text-muted-foreground mt-1">支持 PDF, DOCX, TXT (最大 50MB)</p>
-                            </div>
+                                <FileUp className="w-4 h-4 mr-2" />
+                                上传文档
+                            </Button>
 
                             {isUploading && (
                                 <div className="mt-4 space-y-2">
@@ -1165,11 +1178,10 @@ export function ProjectWorkspace() {
                         </div>
 
                         <div className="p-4 border-b">
-                            <div className="text-sm font-medium text-muted-foreground mb-2">已上传文档</div>
                             {documents.length === 0 ? (
                                 <div className="text-sm text-muted-foreground">暂无文档，请先上传 PDF / DOCX / TXT。</div>
                             ) : (
-                                <div className="space-y-2 overflow-y-auto max-h-[25vh]">
+                                <div className="space-y-2 overflow-y-auto max-h-[32vh]">
                                     {documents.map((doc) => (
                                         <div key={doc.id} className="p-3 bg-muted/20 rounded border space-y-2">
                                             <div className="flex items-start justify-between gap-2">
@@ -1203,18 +1215,6 @@ export function ProjectWorkspace() {
                         </div>
                     </div>
                     </CardContent>
-                    <CardFooter className="p-4 border-t bg-muted/10 flex gap-2">
-                        <Button className="flex-1 font-semibold" onClick={handleAutoGenerate} disabled={isAutoGenerating}>
-                            {isAutoGenerating ? (
-                                <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> 生成配图中...</>
-                            ) : (
-                                <><Send className="w-4 h-4 mr-2" /> 生成配图</>
-                            )}
-                        </Button>
-                        <Button className="flex-1 font-semibold bg-white text-black hover:bg-gray-100 border border-gray-200" onClick={handleGenerateContentWithPrompt}>
-                            生成正文
-                        </Button>
-                    </CardFooter>
                 </Card>
             ) : (
                 <div className="h-full w-10 shrink-0 flex items-center justify-center border rounded bg-card">
