@@ -442,6 +442,7 @@ export function Outline() {
    return (
       <div className="max-w-6xl mx-auto space-y-6">
          <div>
+            <h1 className="text-3xl font-bold tracking-tight">论文大纲生成</h1>
             <div className="flex items-center gap-2 mb-2">
                {projectId && (
                   <a 
@@ -454,8 +455,6 @@ export function Outline() {
                   </a>
                )}
             </div>
-            <h1 className="text-3xl font-bold tracking-tight">论文大纲生成</h1>
-            <p className="text-muted-foreground mt-1">输入论文信息，AI智能生成结构化论文大纲。</p>
          </div>
 
          {error && (
