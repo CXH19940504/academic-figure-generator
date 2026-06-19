@@ -102,7 +102,7 @@ export function ProjectWorkspace() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [isUploading, setIsUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(0);
-    const [templateMode, setTemplateMode] = useState(false);
+
     const [selectedSectionIndices, setSelectedSectionIndices] = useState<number[]>([]);
     const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
     const [showStructure, setShowStructure] = useState(true);
@@ -528,7 +528,7 @@ export function ProjectWorkspace() {
                 color_scheme: currentProject?.color_scheme || 'okabe-ito',
                 figure_types: null,
                 max_figures: null,
-                template_mode: templateMode,
+                template_mode: false,
             };
 
             await api.post(`/projects/${id}/prompts/generate`, payload);
@@ -934,7 +934,7 @@ export function ProjectWorkspace() {
 
     return (
         <>
-            <div className="h-[calc(100vh-6rem)] flex gap-4 overflow-hidden">
+            <div className="h-[calc(140vh-6rem)] flex gap-4 overflow-hidden">
 
             {/* Column 1: Parsed Structure (primary) */}
             {showStructure ? (
@@ -1064,7 +1064,6 @@ export function ProjectWorkspace() {
                     {/* 正文 Prompt 面板 */}
                     <div className="bg-background">
                         <div className="p-4 border-b">
-                            <div className="text-sm font-medium text-muted-foreground mb-2">生成正文相关指令（可编辑后重新生成）</div>
                             {Object.keys(promptDetails).length === 0 ? (
                                 <div className="text-sm text-muted-foreground py-8 text-center border rounded-md bg-muted/20">
                                     当前暂无提示词
@@ -1139,23 +1138,6 @@ export function ProjectWorkspace() {
                                     })}
                                 </div>
                             )}
-                            <label className="flex items-center gap-2 mt-3 cursor-pointer select-none">
-                                <input
-                                    type="checkbox"
-                                    checked={templateMode}
-                                    onChange={(e) => setTemplateMode(e.target.checked)}
-                                    className="w-4 h-4 accent-primary"
-                                />
-                                <span className="text-sm font-medium">只画底图（无文字）</span>
-                            </label>
-                            {templateMode && (
-                                <p className="text-xs text-muted-foreground mt-1">
-                                    生成纯结构底图，所有方块、箭头均无文字标注，方便自行填写内容。
-                                </p>
-                            )}
-                            <p className="text-xs text-muted-foreground mt-2">
-                                章节勾选对两种方式都生效（用于限定参考范围）。
-                            </p>
                         </div>
 
                         <div className="p-4 border-b">
@@ -1164,9 +1146,9 @@ export function ProjectWorkspace() {
                                 onClick={() => fileInputRef.current?.click()}
                             >
                                 <input type="file" ref={fileInputRef} className="hidden" accept=".pdf,.docx,.txt" onChange={handleFileUpload} />
-                                <FileUp className="w-7 h-7 mx-auto text-muted-foreground mb-2" />
-                                <p className="text-sm font-medium">点击或拖拽以上传</p>
-                                <p className="text-xs text-muted-foreground mt-1">支持 PDF, DOCX, TXT (最大 50MB)</p>
+                                <FileUp className="w-6 h-6 mx-auto text-muted-foreground mb-2" />
+                                <p className="text-xs font-medium">点击或拖拽以上传</p>
+                                <p className="text-[10px] text-muted-foreground mt-1">支持 PDF, DOCX, TXT (最大 50MB)</p>
                             </div>
 
                             {isUploading && (
@@ -1187,7 +1169,7 @@ export function ProjectWorkspace() {
                             {documents.length === 0 ? (
                                 <div className="text-sm text-muted-foreground">暂无文档，请先上传 PDF / DOCX / TXT。</div>
                             ) : (
-                                <div className="space-y-2">
+                                <div className="space-y-2 overflow-y-auto max-h-[25vh]">
                                     {documents.map((doc) => (
                                         <div key={doc.id} className="p-3 bg-muted/20 rounded border space-y-2">
                                             <div className="flex items-start justify-between gap-2">

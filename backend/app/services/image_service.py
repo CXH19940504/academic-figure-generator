@@ -99,9 +99,15 @@ class ImageService:
         ExternalAPIException
             On any API communication failure.
         """
-        width, height = self._calculate_dimensions(resolution, aspect_ratio)
-        size_str = f"{width}x{height}"
         timeout = self.TIMEOUT_MAP.get(resolution, 600)
+
+        # Doubao models use resolution string directly (e.g. "2K"), not pixel dimensions
+        if self.model.startswith("doubao"):
+            size_str = resolution
+            width, height = None, None  # dimensions unknown until image is returned
+        else:
+            width, height = self._calculate_dimensions(resolution, aspect_ratio)
+            size_str = f"{width}x{height}"
 
         # Build the request body (OpenAI-compatible format)
         body: dict = {
@@ -188,14 +194,23 @@ class ImageService:
                 "No image data in response (neither b64_json nor url present)",
             )
 
-        logger.info(
-            "NanoBanana image generated in %d ms: %dx%d (resolution=%s, aspect=%s)",
-            duration_ms,
-            width,
-            height,
-            resolution,
-            aspect_ratio,
-        )
+        if width and height:
+            logger.info(
+                "NanoBanana image generated in %d ms: %dx%d (resolution=%s, aspect=%s)",
+                duration_ms,
+                width,
+                height,
+                resolution,
+                aspect_ratio,
+            )
+        else:
+            logger.info(
+                "NanoBanana image generated in %d ms (resolution=%s, aspect=%s, model=%s)",
+                duration_ms,
+                resolution,
+                aspect_ratio,
+                self.model,
+            )
 
         return {
             "image_data": image_data,

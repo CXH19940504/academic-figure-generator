@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import os
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, UploadFile
 from sqlalchemy import func, select, update
@@ -55,7 +57,7 @@ async def list_project_documents(
 async def upload_document(
     project_id: str,
     file: UploadFile,
-    data: str = Form(),
+    data: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload a document to a project.
@@ -63,12 +65,20 @@ async def upload_document(
     Accepts DOCX or TXT files. The file is stored locally and parsed
     synchronously (inline).
     """
-    data_obj = DocumentCreate.model_validate_json(data)
+    original_filename = file.filename or "unnamed"
+    if data:
+        data_obj = DocumentCreate.model_validate_json(data)
+    else:
+        # Derive sensible defaults from filename when no metadata is provided
+        data_obj = DocumentCreate(
+            title=os.path.splitext(original_filename)[0],
+            paper_type=1,
+            subject_code="08",
+        )
     project = await get_project_from_db(project_id, db)
 
     contents = await file.read()
     file_size = len(contents)
-    original_filename = file.filename or "unnamed"
 
     # Validate
     from app.services.document_service import DocumentService  # noqa: PLC0415
