@@ -37,15 +37,6 @@ class SystemPromptName(Enum):
     SECTION = "academic-section-prompt"
 
 
-def _load_skill_content(skill_name: str) -> str:
-    """Load the specified skill's SKILL.md content."""
-    _SKILL_PATH = _PROJECT_ROOT / skill_name / "SKILL.md"
-    if not _SKILL_PATH.exists():
-        logger.warning("%s SKILL.md file not found at %s", skill_name, _SKILL_PATH)
-        return ""
-    return _SKILL_PATH.read_text(encoding="utf-8")
-
-
 def _get_prompt_template(material_name: str, lang: str = "中文") -> str:
     """Get the prompt template for the specified material."""
     try:
@@ -125,7 +116,18 @@ class DeepseekService:
             raise ExternalAPIException("Deepseek", f"API error: {exc}") from exc
 
         duration_ms = int((time.monotonic() - start_time) * 1000)
-        if material_type in [MaterialType.OUTLINE, MaterialType.SECTION, MaterialType.ABSTRACT]:
+        if material_type == MaterialType.FIGURE:
+            logger.info(
+                "Deepseek API call completed in %d ms: %d figure items (stream=%s)",
+                duration_ms,
+                len(result_text),
+                stream,
+            )
+            return {
+                "data": result_text,
+                "duration_ms": duration_ms,
+            }
+        elif material_type not in (MaterialType.FIGURE, MaterialType.TABLE, MaterialType.FORMULA, MaterialType.CODE):
             sections = self._parse_sections_response(result_text)
             logger.info(
                 "Deepseek API call completed in %d ms: %d sections items (stream=%s)",
@@ -149,7 +151,7 @@ class DeepseekService:
         endpoint = f"{self.api_base}/chat/completions"
 
         messages = [
-            {"role": "system", "content": system_prompt or self._get_skill_content(SystemPromptName.FIGURE_PROMPT.value)},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
 
@@ -194,7 +196,7 @@ class DeepseekService:
         endpoint = f"{self.api_base}/chat/completions"
 
         messages = [
-            {"role": "system", "content": system_prompt or self._get_skill_content(SystemPromptName.FIGURE_PROMPT.value)},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
 
@@ -327,9 +329,15 @@ class DeepseekService:
 
         if not outline:
             logger.warning("Could not parse sections from Deepseek response: no heading tags found")
-            return []
-        sections = self._validate_sections(outline)
-        logger.info("Parsed %d sections items from Deepseek response", len(sections))
+            outline.append({
+                "level": 1,
+                "title": cleaned,
+                "order": 0,
+            })
+            sections = outline
+        else:
+            sections = self._validate_sections(outline)
+            logger.info("Parsed %d sections items from Deepseek response", len(sections))
         return sections
 
     @staticmethod
@@ -343,7 +351,7 @@ class DeepseekService:
 
             validated: dict[str, Any] = {
                 "level": section.get("level", 1),
-                "title": section.get("title", f"Section {i + 1}"),
+                "title": re.split(r'[ .、]', section.get("title", f"Section{i + 1}"))[-1],  # 标题去掉序号前缀
                 "order": section.get("order", i + 1),
             }
             if not validated["title"]:
@@ -353,6 +361,171 @@ class DeepseekService:
             if validated["level"] == 1:
                 validated["material_type"] = MaterialType.get_value_by_name(validated["title"])
                 
+            valid.append(validated)
+
+        return valid
+
+    async def generate_figure_prompts(
+        self,
+        sections: list[dict],
+        color_scheme: dict,
+        paper_field: str | None = None,
+        figure_types: list[str] | None = None,
+        user_request: str | None = None,
+        max_figures: int | None = None,
+    ) -> dict:
+        """Call Claude via Agent SDK to generate figure prompts.
+
+        Returns:
+            dict with keys: figures, duration_ms
+        """
+        user_prompt = self._build_user_message(
+            sections=sections,
+            color_scheme=color_scheme,
+            paper_field=paper_field,
+            figure_types=figure_types,
+            user_request=user_request,
+            max_figures=max_figures,
+        )
+        system_prompt = self._get_skill_content(MaterialType.FIGURE.name)
+        result = await self.generate_txt_from_prompt(
+            user_prompt=user_prompt,
+            system_prompt=system_prompt,
+            material_type=MaterialType.FIGURE,
+        )
+        figures = self._parse_figures_response(result["data"])
+        return {
+            "figures": figures,
+            "duration_ms": result["duration_ms"],
+        }
+
+    def _build_user_message(
+        self,
+        sections: list[dict],
+        color_scheme: dict,
+        paper_field: str | None,
+        figure_types: list[str] | None = None,
+        user_request: str | None = None,
+        max_figures: int | None = None,
+    ) -> str:
+        """Build the user message with paper sections and color palette."""
+        parts: list[str] = []
+
+        if paper_field:
+            parts.append(f"**Academic Field:** {paper_field}\n")
+
+        # Color palette
+        parts.append("**Color Palette to Use (Step 2.5 SKIPPED — already selected by user):**")
+        color_block = json.dumps(color_scheme, indent=2)
+        parts.append(f"```json\n{color_block}\n```")
+        parts.append(
+            "The color scheme above has been confirmed by the user as their final choice. "
+            "DO NOT stop to present color options — proceed directly to Step 3 to generate figure prompts."
+        )
+        parts.append("")
+
+        # Figure types
+        if figure_types:
+            parts.append("**Preferred figure types:**")
+            for ft in figure_types:
+                parts.append(f"  - {ft}")
+            parts.append("")
+
+        # User request
+        if user_request and user_request.strip():
+            parts.append(f"**User Request (highest priority):**\n{user_request.strip()}\n")
+
+        # Max figures
+        if max_figures is not None and max_figures > 0:
+            parts.append(f"**Generate at most {max_figures} figure prompt(s).**\n")
+
+        # Paper content
+        parts.append("--- PAPER SECTIONS ---\n")
+        for i, section in enumerate(sections, 1):
+            # Handle both dict and ORM object
+            if isinstance(section, dict):
+                title = section.get("title", f"Section {i}")
+                content = section.get("content", section.get("text", ""))
+            else:
+                title = getattr(section, "title", f"Section {i}")
+                content = getattr(section, "content", "") or ""
+
+            # Truncate very long sections
+            max_section_chars = 8000
+            if len(content) > max_section_chars:
+                content = content[:max_section_chars] + "\n[... section truncated ...]"
+
+            parts.append(f"## Section {i}: {title}")
+            parts.append(content)
+            parts.append("")
+
+        parts.append("--- END OF PAPER ---\n")
+        parts.append(
+            "Generate figure prompts that best match the paper content. "
+            "Return ONLY valid JSON array. "
+            "Each prompt field must be at least 500 words and extremely precise."
+        )
+
+        return "\n".join(parts)
+
+    def _parse_figures_response(self, text: str) -> list[dict]:
+        """Extract and validate the JSON array of figure dicts from Claude's response."""
+        if not text or not text.strip():
+            logger.warning("Empty response from Claude")
+            return []
+
+        cleaned = text.strip()
+
+        # Strip markdown code fences if present
+        if cleaned.startswith("```"):
+            first_newline = cleaned.index("\n") if "\n" in cleaned else len(cleaned)
+            cleaned = cleaned[first_newline + 1 :]
+            if cleaned.rstrip().endswith("```"):
+                cleaned = cleaned.rstrip()[:-3].rstrip()
+
+        # Try direct parse
+        try:
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, list):
+                return self._validate_figures(parsed)
+        except json.JSONDecodeError:
+            pass
+
+        # Fallback: search for JSON array
+        match = re.search(r"\[[\s\S]*\]", cleaned)
+        if match:
+            try:
+                parsed = json.loads(match.group())
+                if isinstance(parsed, list):
+                    return self._validate_figures(parsed)
+            except json.JSONDecodeError:
+                pass
+
+        logger.warning("Could not parse JSON figures from Claude response")
+        logger.warning("Raw Claude response (first 3000 chars): %s", text[:3000] if text else "(empty)")
+        return []
+
+    @staticmethod
+    def _validate_figures(figures: list) -> list[dict]:
+        """Validate and normalize the list of figure dicts."""
+        valid: list[dict] = []
+        for i, fig in enumerate(figures):
+            if not isinstance(fig, dict):
+                logger.warning("Skipping non-dict figure at index %d", i)
+                continue
+
+            validated: dict[str, Any] = {
+                "figure_number": fig.get("figure_number", i + 1),
+                "title": fig.get("title", f"Figure {i + 1}"),
+                "suggested_figure_type": fig.get("suggested_figure_type", fig.get("figure_type", "diagram")),
+                "suggested_aspect_ratio": fig.get("suggested_aspect_ratio", "16:9"),
+                "prompt": fig.get("prompt", ""),
+            }
+
+            if not validated["prompt"]:
+                logger.warning("Skipping figure %d: empty prompt", validated["figure_number"])
+                continue
+
             valid.append(validated)
 
         return valid

@@ -9,12 +9,12 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.base import get_project_from_db
+from app.api.base import get_project_from_db, get_sections_from_db, get_document_from_db
 from app.config import get_settings
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.core.prompts.color_schemes import DEFAULT_COLOR_SCHEME, PRESET_COLOR_SCHEMES
 from app.dependencies import get_db
-from app.models.document import Document
+from app.models.document import Section
 from app.models.prompt import Prompt
 from app.schemas.common import MaterialType
 from app.schemas.prompt import (
@@ -24,9 +24,11 @@ from app.schemas.prompt import (
     PromptUpdate,
 )
 from app.services.claude_code_service import ClaudeCodeService
+from app.services.deepseek_service import DeepseekService
 from app.services.prompt_service import PromptService
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 router = APIRouter(prefix="", tags=["Prompts"])
 
@@ -36,6 +38,7 @@ def _prompt_to_response(p: Prompt) -> PromptResponse:
         id=p.id,
         project_id=p.project_id,
         document_id=p.document_id,
+        material_type=p.material_type,
         figure_number=p.figure_number,
         title=p.title,
         original_prompt=p.original_prompt,
@@ -65,27 +68,25 @@ async def generate_prompts(
     """
     project = await get_project_from_db(project_id, db)
 
-    # Find the most recent completed document
-    result = await db.execute(
-        select(Document)
-        .where(
-            Document.project_id == project.id,
-            Document.parse_status == "completed",
-        )
-        .order_by(Document.created_at.desc())
-        .limit(1)
-        .options(selectinload(Document.sections))
-    )
-    document: Document | None = result.scalar_one_or_none()
+    # Validate document_id
+    if not data.document_id:
+        raise BadRequestException("document_id is required.")
+
+    # Get document
+    document = await get_document_from_db(data.document_id, db)
     if document is None:
         raise BadRequestException(
-            "No parsed document found for this project. Upload a document first."
+            "Document not found for this project."
         )
 
+    # Validate section_indices
+    if len(data.section_indices) == 0:
+        raise BadRequestException("section_indices cannot be empty.")
+
     # Get sections
-    sections = document.sections or []
-    if data.section_indices:
-        sections = [s for i, s in enumerate(sections) if i in data.section_indices]
+    sections = await get_sections_from_db(
+        document.id, None, db,
+        filters=[Section.id.in_(data.section_indices)])
 
     if not sections:
         raise BadRequestException("No sections available for prompt generation.")
@@ -101,7 +102,7 @@ async def generate_prompts(
     if data.figure_types is None and len(sections) > 0:
         # 1. 为每个章节创建异步任务
         tasks = [
-            asyncio.create_task(ClaudeCodeService().generate_figure_prompts(
+            asyncio.create_task(DeepseekService().generate_figure_prompts(
                 sections=[section],
                 color_scheme=color_scheme,
                 paper_field=project.paper_field,
@@ -124,7 +125,7 @@ async def generate_prompts(
             figures.extend(result.get("figures", []))
             total_duration_ms += result.get("duration_ms", 0)
     else:
-        result_data = await ClaudeCodeService().generate_figure_prompts(
+        result_data = await DeepseekService().generate_figure_prompts(
             sections=sections,
             color_scheme=color_scheme,
             paper_field=project.paper_field,

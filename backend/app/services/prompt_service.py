@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundException
 from app.models.prompt import Prompt
+from app.schemas.common import MaterialType
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,7 @@ class PromptService:
             prompt = Prompt(
                 project_id=project_id,
                 document_id=document_id,
+                material_type=MaterialType.FIGURE.value,
                 figure_number=fig.get("figure_number", len(prompts) + 1),
                 title=fig.get("title"),
                 original_prompt=fig.get("prompt"),

@@ -10,9 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.base import (
     get_document_from_db, get_project_from_db, get_project_or_create_from_db,
-    get_prompt_from_db, get_template_from_db, get_materials_from_db,
-    get_document_without_outline
-)
+    get_prompt_from_db, get_template_from_db,
+    get_document_without_outline, get_section_from_db, get_sections_from_db,
+   )
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.dependencies import get_db
 from app.models.document import Document, Section
@@ -26,6 +26,7 @@ from app.schemas.document import (
 )
 from app.services.local_storage_service import LocalStorageService
 from app.services.deepseek_service import DeepseekService
+from app.dependencies import get_async_session_factory
 
 logger = logging.getLogger(__name__)
 
@@ -101,10 +102,9 @@ async def upload_document(
     try:
         parse_result = doc_service.parse(contents, file_type)
         document.page_count = parse_result.get("page_count")
-
         # Create Section records from parsed sections
-        section_count = await _save_sections_to_db(parse_result, document.id, db)
-
+        section_count = await _save_sections_to_db(
+            parse_result.get("sections"), document.id, db)
         document.parse_status = "completed"
         logger.info("Document %s parsed successfully: %d sections", document.id, section_count)
     except Exception as exc:
@@ -169,21 +169,20 @@ def _build_system_prompt(skill_name: str, params: dict) -> str:
 def _build_section_content(sections: list[Section]) -> str:
     """构建章节内容"""
     content = ""
-    for section in sections:
+    for idx, section in enumerate(sections):
         title = section.title or ""
         level = section.level
         content += f"<heading{level}>{title}</heading{level}>\n"
-    content += "<section>{% section_content %}</section>"
+        if idx == len(sections) - 1 or section.level >= sections[idx + 1].level:
+            content += "<section>{% section_content %}</section>\n"
     return content
 
 
-async def _save_sections_to_db(result: dict, document_id: str, db: AsyncSession) -> int:
+async def _save_sections_to_db(sections: list[dict], document_id: str, db: AsyncSession) -> int:
     """将大纲数据保存到数据库"""
     logger = logging.getLogger(__name__)
-    logger.info("_save_sections_to_db called, result keys: %s, document_id: %s", list(result.keys()), document_id)
-
-    sections = result.get("data", [])
-    logger.info("_save_sections_to_db: found %d sections in result", len(sections))
+    logger.info("_save_sections_to_db called, sections keys: %s, document_id: %s", list(sections[0].keys() if sections else []), document_id)
+    logger.info("_save_sections_to_db: found %d sections", len(sections))
 
     for idx, section_data in enumerate(sections):
         section = Section(
@@ -191,9 +190,9 @@ async def _save_sections_to_db(result: dict, document_id: str, db: AsyncSession)
             title=section_data.get("title", f"Section {idx + 1}"),
             level=section_data.get("level", 1),
             material_type=section_data.get("material_type", MaterialType.SECTION.value),
-            content="",
-            page_start=None,
-            page_end=None,
+            content=section_data.get("content", ""),
+            page_start=section_data.get("page_start", None),
+            page_end=section_data.get("page_end", None),
             order_index=idx,
         )
         db.add(section)
@@ -344,7 +343,7 @@ async def generate_outline_by_prompt(
         )
         document = await get_document_without_outline(document_id, db)
         document_id = document.id
-        section_count = await _save_sections_to_db(result, document_id, db)
+        section_count = await _save_sections_to_db(result.get("data", []), document_id, db)
         # 更新 Document 状态
         prompt.generation_status = "completed"
         document.parse_status = "completed"
@@ -417,7 +416,7 @@ async def generate_outline_direct(
         )
         document = await get_document_without_outline(document_id, db)
         document_id = document.id
-        section_count = await _save_sections_to_db(result, document_id, db)
+        section_count = await _save_sections_to_db(result.get("data", []), document_id, db)
         prompt.generation_status = "completed"
         document.parse_status = "completed"
         await db.flush()
@@ -459,35 +458,41 @@ async def create_sections_prompt(
 
     # 2. 获取 Document
     document = await get_document_from_db(data.document_id, db)
-    logger.info("create_sections_prompt: document_id=%s, sections_count=%d, subject_code=%s",
-                document.id, len(document.sections), document.subject_code)
     if document.project_id != project_id:
         raise BadRequestException("Document does not belong to this project")
-    document.parse_status = "generating"
-    await db.flush()
 
     # 3. 合并所有子章节
     if not data.section_indices:
         raise BadRequestException("section_indices must not be empty")
+    sections = await get_sections_from_db(
+        data.document_id, None, db,
+         filters=[Section.id.in_(data.section_indices)])
+    if not sections:
+        raise BadRequestException("No sections found with the given indices")
+    
     update_paragraphs = []
     paragraph: list[Section] = []
-    sectionDict = {section.id: section for section in document.sections}
-    for section_id in data.section_indices:
-        section = sectionDict.get(section_id)
-        if section is None:
-            raise BadRequestException(f"Section with id {section_id} not found in document {document.id}")
-        if not paragraph or section.level >= paragraph[-1].level:
-            paragraph.append(section)
+    for section in sections:
+        if not paragraph or section.level > paragraph[0].level:
+            # 获取章节类型
+            try:
+                MaterialType(section.material_type)
+            except KeyError:
+                logger.error("create_sections_prompt: title=%s, material_type=%d not found in MaterialType",
+                                section.title, section.material_type)
+                section.material_type = MaterialType.SECTION.value
         else:
-            update_paragraphs.append(paragraph.copy())
-            paragraph.clear()
-            paragraph.append(section)
+            update_paragraphs.append(paragraph)
+            paragraph = list()
+        paragraph.append(section)
     if paragraph:
         update_paragraphs.append(paragraph)
     logger.info("create_sections_prompt: built %d paragraphs from %d sections",
-                len(update_paragraphs), len(data.section_indices))
+                len(update_paragraphs), len(sections))
 
     # 4. 构建 prompt
+    document.parse_status = "generating"
+    await db.flush()
     exist_cnt = (await db.execute(
         select(func.count())
         .select_from(Prompt)
@@ -497,42 +502,46 @@ async def create_sections_prompt(
         )
     )).scalar_one()
     # 5. 构建 prompt
-    prompt_prompts = {}
+    prompt_ids = []
     params = {
         "major_name": get_subject_name_by_code(document.subject_code or "08"),
         "paper_title": document.title,
         "paper_type": PaperType.get_name(document.paper_type),
     }
     
-    # 预查询 abstract_sections，避免循环内重复查询
-    abstract_sections: list[Section] = []
-    try:
-        abstract_sections = await get_materials_from_db(
-            document.id, MaterialType.ABSTRACT, db)
-    except Exception:
-        logger.warning("Abstract sections not found for document %s", document.id)
+    material_types: set[int] = set()
+    for paragraph in update_paragraphs:
+        material_types.add(paragraph[0].material_type)
+
+    # 预查询 abstract_sections，当存在非 ABSTRACT 的 material_type 时需要注入摘要内容
+    has_non_abstract_types = len(material_types - {MaterialType.ABSTRACT.value}) > 0
+    if has_non_abstract_types:
+        try:
+            abstract_sections = await get_sections_from_db(document.id, MaterialType.ABSTRACT, db)
+            if abstract_sections:
+                params["abstract_content"] = abstract_sections[0].content
+            else:
+                raise BadRequestException("Abstract sections not found")
+        except Exception:
+            raise BadRequestException("Failed to fetch abstract sections")
+
+    if {MaterialType.ABSTRACT.value, MaterialType.INTRODUCTION.value, MaterialType.CONCLUSION.value} & material_types:
+        headers_sections =  await get_sections_from_db(document.id, MaterialType.OUTLINE, db)
+        if not headers_sections:
+            raise BadRequestException("Document does not generate headers")
+        params["all_titles"] = '\n'.join(["#"*section.level + " " + section.title for section in headers_sections])
     
     for i, paragraph in enumerate(update_paragraphs):
-        # 获取章节类型
-        try:
-            material_type = MaterialType(paragraph[0].material_type)
-        except KeyError:
-            logger.error("create_sections_prompt: title=%s, material_type=%d not found in MaterialType",
-                         paragraph[0].title, paragraph[0].material_type)
-            material_type = MaterialType.SECTION
+        material_type: MaterialType = MaterialType(paragraph[0].material_type)
         logger.info("create_sections_prompt: paragraph[%d] head_section=%s, material_type=%s, section_count=%d",
                     i, paragraph[0].title, material_type.name, len(paragraph))
         # 章节/非章节的user_prompt处理
-        if material_type != MaterialType.ABSTRACT:
-            if not abstract_sections:
-                raise BadRequestException("Document does not generate abstract")
-            params["abstract_content"] = abstract_sections[0].content
+        if material_type == MaterialType.ABSTRACT:
+            user_prompt = params["all_titles"]
+        else:
             # 合并相同层级的章节
             user_prompt = _build_section_content(paragraph)
-        else:
-            _sections: list[Section] = await get_materials_from_db(
-                document.id, MaterialType.SECTION, db)
-            user_prompt = '\n'.join(["#"*section.level + " " + section.title for section in _sections])
+        
         # 构建system_prompt
         system_prompt = _build_system_prompt(material_type.name, params)
         logger.debug("create_sections_prompt: paragraph[%d] system_prompt_len=%d, user_prompt_len=%d",
@@ -550,24 +559,39 @@ async def create_sections_prompt(
         )
         db.add(prompt)
         await db.flush()
-        await db.refresh(prompt)
-        prompt_prompts[prompt.id] = prompt.original_prompt
+        prompt_ids.append(prompt.id)
 
     logger.info("create_sections_prompt: done, created %d prompts for document_id=%s",
-                len(prompt_prompts), document.id)
-
+                len(prompt_ids), document.id)
+    
     return SectionPromptResponse(
         success=True,
         message="Prompt创建成功",
-        prompt_prompts=prompt_prompts,
+        prompt_ids=prompt_ids,
         document_id=document.id,
         project_id=project_id,
     )
 
 
+async def _generate_abstract(prompt_id: str, section_id: int, section_prompt_ids: list[str]):
+    """根据prompt_id生成摘要（使用独立 DB session，支持并发，带数据库锁重试）"""
+    abstract_execption = await _generate_sections(prompt_id)
+    if abstract_execption or not section_prompt_ids:
+        return abstract_execption
+    
+    session_factory = get_async_session_factory()
+    async with session_factory() as db:
+        section = await get_section_from_db(section_id, db)
+        result = await db.execute(select(Prompt).where(Prompt.id.in_(section_prompt_ids)))
+        for _prompt in result.scalars().all():
+            _prompt.original_prompt = _prompt.original_prompt.replace(
+                "{% abstract_content %}", section.content)
+        logger.info("generate_abstract: %s, abstract_section=%d", prompt_id, section.content)
+        await db.commit()
+
+
 async def _generate_sections(prompt_id: str):
     """根据prompt_id生成正文（使用独立 DB session，支持并发，带数据库锁重试）"""
-    from app.dependencies import get_async_session_factory
 
     service = DeepseekService()
     session_factory = get_async_session_factory()
@@ -617,22 +641,31 @@ async def _generate_sections(prompt_id: str):
                     ))
                     section_count += 1
                 else:
-                    input_nodes = service._parse_sections_response(user_prompt)
+                    input_sections = service._parse_sections_response(user_prompt)
                     sections = result.get("data", [])
-                    if len(sections) + len(prompt.source_sections) < len(input_nodes):
-                        raise BadRequestException("Sections count not match input nodes count")
-                    section_count += len(sections)
-                    header_idx, section_idx = 0, 0
-                    for _node in input_nodes:
-                        if _node["level"] > 3:
-                            await db.execute(update(Section).where(
-                                Section.id == prompt.source_sections[header_idx]
-                            ).values(
-                                content=sections[section_idx]["title"],
-                            ))
-                            section_idx += 1
+                    if not sections:
+                        raise BadRequestException("AI 返回格式错误")
+                    header_idx = 0
+                    input_idx = 0
+                    for _section in sections:
+                        if _section["level"] > 3:
+                            while input_idx < len(input_sections) and input_sections[input_idx]["level"] <= 3:
+                                input_idx += 1
+                                header_idx += 1
+                            input_idx += 1
+                            if header_idx < len(prompt.source_sections):
+                                await db.execute(update(Section).where(
+                                    Section.id == prompt.source_sections[header_idx-1]
+                                ).values(
+                                    content = _section["title"],
+                                ))
+                                section_count += 1
+                            else:
+                                header_idx += 1
+                                logger.warning("Exceeded source sections count, skipping section %s", _section["title"])
                         else:
-                            header_idx += 1
+                            input_idx += 1
+                            header_idx += 1 
                 prompt.generation_status = "completed"
                 await db.commit()
                 return section_count

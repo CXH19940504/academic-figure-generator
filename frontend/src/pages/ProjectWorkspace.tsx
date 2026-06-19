@@ -140,6 +140,7 @@ export function ProjectWorkspace() {
 
     const buildSectionTree = (sections: SectionItem[]): SectionNode[] => {
         const arr = (sections || []).map((sec, idx) => {
+            // 使用数据库的 Section.id 作为 node.idx
             const sec_id: number = typeof sec?.id === 'number' ? sec.id : idx;
             const title = (sec?.title || `Section ${idx + 1}`).toString();
             const rawLevel = Number(sec?.level) || 1;
@@ -227,15 +228,11 @@ export function ProjectWorkspace() {
     useEffect(() => {
         if (documentIdRef.current) return;                      // already selected
         if (!documents.length) return;                          // no documents yet
-        const firstParsed = documents.find(
-            (d) => d.parse_status === 'completed'
-        );
-        if (firstParsed?.id) {
-            setDocumentId(firstParsed.id);
-        }
+        if (!documents[0]) return;                              // documents[0] not exist
+        setDocumentId(documents[0].id);
     }, [documents]);
 
-    // Reset section state when switching documents
+    // 切换文档时重置状态
     useEffect(() => {
         structureInitRef.current = null;
         setSections([]);
@@ -255,8 +252,6 @@ export function ProjectWorkspace() {
         if (!documentId) return;
         // sections是空的无需渲染
         if (!Array.isArray(sections) || sections.length === 0) return;
-        // 已经初始化过，无需重新渲染
-        if (structureInitRef.current === documentId) return;
         const roots = buildSectionTree(sections);
         const next: Record<string, boolean> = {};
         for (const r of roots) next[`sec-${r.idx}`] = true; // default collapsed: only show chapters
@@ -403,12 +398,13 @@ export function ProjectWorkspace() {
                 try {
                     const freshDocs = await fetchDocumentsData();
                     const firstParsed = freshDocs.find(
-                        (d: any) => d.parse_status === 'completed'
+                        (d: any) => d.parse_status === 'completed' && Array.isArray(d.sections) && d.sections.length > 0
                     );
                     if (firstParsed?.id) {
                         setDocumentId(firstParsed.id);
                         if (sections.length && selectedSectionIndices.length === 0) {
-                            setSelectedSectionIndices(sections.map((sec: any, idx: number) => typeof sec?.id === 'number' ? sec.id : idx));
+                            // 使用数据库 Section.id 作为 selectedSectionIndices 的值
+                            setSelectedSectionIndices(sections.map((sec: any) => sec.id));
                         }
                     }
                 } catch (e) {
@@ -473,12 +469,6 @@ export function ProjectWorkspace() {
         setUploadProgress(0);
         const formData = new FormData();
         formData.append('file', file);
-        formData.append('data', JSON.stringify({
-            uuid: '',
-            title: file.name.replace(/\.[^/.]+$/, ''),
-            paper_type: 1,
-            subject_code: currentProject?.subject_code || '08',
-        }));
 
         try {
             await api.post(`/projects/${id}/documents`, formData, {
@@ -520,8 +510,7 @@ export function ProjectWorkspace() {
     const handleAutoGenerate = async () => {
         if (!id) return;
 
-        const parsedDoc = documents.find((d) => d.parse_status === 'completed' && Array.isArray(d.sections) && d.sections.length > 0);
-        if (!parsedDoc) {
+        if (!documentId) {
             alert('请先上传文档并等待解析完成，再生成配图。');
             return;
         }
@@ -534,7 +523,8 @@ export function ProjectWorkspace() {
         setIsAutoGenerating(true);
         try {
             const payload: any = {
-                section_indices: selectedSectionIndices.length ? selectedSectionIndices : null,
+                document_id: documentId,
+                section_indices: selectedSectionIndices,
                 color_scheme: currentProject?.color_scheme || 'okabe-ito',
                 figure_types: null,
                 max_figures: null,
@@ -607,8 +597,8 @@ export function ProjectWorkspace() {
                 return;
             }
 
-            // prompt_prompts is a dict {id: prompt_text, ...}
-            const promptIds = Object.keys(promptResponse.data.prompt_prompts);
+            // prompt_ids is a list of prompt ids
+            const promptIds = promptResponse.data.prompt_ids;
             if (promptIds.length === 0) {
                 alert('未生成任何Prompt，请检查章节选择。');
                 return;
@@ -705,10 +695,17 @@ export function ProjectWorkspace() {
         }
 
         const roots = buildSectionTree(sections);
-        const allIndices = sections.map((sec, idx) => typeof sec?.id === 'number' ? sec.id : idx);
+        // 收集所有 node.idx（数据库 Section.id）作为 selectedSectionIndices 的值
+        const allIndices: number[] = [];
+        for (const root of roots) {
+            const ids = collectIndices(root);
+            allIndices.push(...ids);
+        }
+        // selectedSectionIndices 存储的是 node.idx（数据库 Section.id）
         const selectedSet = new Set(selectedSectionIndices);
 
         const selectMany = (indices: number[], checked: boolean) => {
+            // indices 就是 node.idx（数据库 Section.id）
             setSelectedSectionIndices((prev) => {
                 const set = new Set(prev);
                 for (const i of indices) {
@@ -718,10 +715,19 @@ export function ProjectWorkspace() {
                 return Array.from(set).sort((a, b) => a - b);
             });
         };
+        
+        // 创建 id -> section 的映射
+        const sectionById = new Map<number, SectionItem>();
+        for (const sec of sections) {
+            const id = parseInt(sec.id, 10);
+            sectionById.set(id, sec);
+        }
 
-        const activeSection = activePreviewIdx !== null ? sections[activePreviewIdx] : null;
-        const selectedCharCount = selectedSectionIndices.reduce((acc, idx) => {
-            const s = sections[idx];
+        // activePreviewIdx 现在存储的是数据库 Section.id
+        const activeSection = activePreviewIdx !== null ? sectionById.get(activePreviewIdx) || null : null;
+        // selectedSectionIndices 中存储的是 node.idx（数据库 Section.id）
+        const selectedCharCount = selectedSectionIndices.reduce((acc, id) => {
+            const s = sectionById.get(id);
             return acc + ((s?.content || s?.text || '') as string).length;
         }, 0);
 
@@ -862,7 +868,7 @@ export function ProjectWorkspace() {
                             <div>
                                 <div className="flex items-start gap-2 mb-3">
                                     <div>
-                                        <h4 className="text-sm font-semibold leading-tight">{(activeSection as any).title || `Section ${activePreviewIdx! + 1}`}</h4>
+                                        <h4 className="text-sm font-semibold leading-tight">{(activeSection as any).title || 'Section'}</h4>
                                         {(activeSection as any).page_start != null && (
                                             <span className="text-xs text-muted-foreground">第 {(activeSection as any).page_start + 1} 页</span>
                                         )}
@@ -1041,13 +1047,13 @@ export function ProjectWorkspace() {
                         <div className="flex items-center justify-between">
                             <CardTitle className="text-lg flex items-center">
                                 <FileText className="w-5 h-5 mr-2 text-primary" />
-                                参考文档
+                                正文生成AI指令
                             </CardTitle>
                             <Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setShowDocs(false)}
-                                title="收起参考文档"
+                                title="收起正文生成AI指令"
                             >
                                 <ChevronLeft className="w-4 h-4" />
                             </Button>
@@ -1058,7 +1064,7 @@ export function ProjectWorkspace() {
                     {/* 正文 Prompt 面板 */}
                     <div className="bg-background">
                         <div className="p-4 border-b">
-                            <div className="text-sm font-medium text-muted-foreground mb-2">你想生成什么图？（可选）</div>
+                            <div className="text-sm font-medium text-muted-foreground mb-2">生成正文相关指令（可编辑后重新生成）</div>
                             {Object.keys(promptDetails).length === 0 ? (
                                 <div className="text-sm text-muted-foreground py-8 text-center border rounded-md bg-muted/20">
                                     当前暂无提示词

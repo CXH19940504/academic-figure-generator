@@ -143,14 +143,17 @@ export function Outline() {
       try {
          const response = await api.get(`/documents/${documentId}/prompts`, {
             params: {
-               material_type: 1,
+               material_type: 5,
             },
          });
          const prompts = response.data || [];
          if (prompts.length > 0) {
             const latestPrompt = prompts[0];
             const promptContent = latestPrompt.active_prompt || '';
-            setOutlinePrompt(promptContent);
+            // 仅在 active_prompt 有内容时更新，避免覆盖 handleGenerate 刚设置的 system_prompt
+            if (promptContent) {
+               setOutlinePrompt(promptContent);
+            }
             setPromptId(latestPrompt.id || null);
             setIsGenerating(latestPrompt.generate_status === 'generating');
          } else {
@@ -280,7 +283,6 @@ export function Outline() {
          return;
       }
 
-      setOutlineResult(null);
       setError(null);
 
       try {

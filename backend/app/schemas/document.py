@@ -127,8 +127,8 @@ class SectionPromptResponse(BaseModel):
     """生成章节Prompt的响应"""
     success: bool = True
     message: str = "Prompt创建成功"
-    prompt_prompts: dict[str, str] = Field(
-        default_factory=dict, description="Created prompt IDs and prompts")
+    prompt_ids: list[str] = Field(
+        default_factory=list, description="Created prompt IDs")
     document_id: str
     project_id: str
 
@@ -143,4 +143,4 @@ class SectionGenerateResponse(BaseModel):
     """生成章节正文的响应"""
     success: bool = True
     message: str = "Sections generated successfully"
-    sections: list[dict] = Field(default_factory=list, description="Updated sections with content")
+    section_count: int = Field(default=0, description="Number of successfully generated sections")

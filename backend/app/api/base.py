@@ -58,13 +58,11 @@ async def get_document_from_db(document_id: str, db: AsyncSession) -> Document:
     result = await db.execute(
         select(Document)
         .where(Document.id == document_id)
-        .options(selectinload(Document.sections))
     )
     document: Document | None = result.scalar_one_or_none()
     if document is None:
         raise NotFoundException("Document not found")
     return document
-
 
 async def get_document_without_outline(document_id: str, db: AsyncSession) -> Document:
     """Get document by ID, raise NotFoundException if not found, without outline."""
@@ -113,13 +111,26 @@ async def get_prompt_from_db(prompt_id: str, db: AsyncSession) -> Prompt:
     return prompt
 
 
-async def get_materials_from_db(
-    document_id: str, material_type: MaterialType, db: AsyncSession
+async def get_section_from_db(section_id: int, db: AsyncSession) -> Section:
+    """Get section by ID, raise NotFoundException if not found."""
+    result = await db.execute(select(Section).where(Section.id == section_id))
+    section: Section | None = result.scalar_one_or_none()
+    if section is None:
+        raise NotFoundException("Section not found")
+    return section
+
+
+async def get_sections_from_db(
+    document_id: str, material_type: MaterialType, db: AsyncSession, filters: list = []
 ) -> list[Section]:
-    """Get materials by document ID and material type."""
-    result = await db.execute(select(Section).where(
-        Section.document_id == document_id,
-        Section.material_type == material_type.value
-    ))
-    materials = result.scalars().all()
-    return materials
+    """Get sections by document ID and material type."""
+    _filters = [Section.document_id == document_id, *filters]
+    if material_type:
+        if material_type == MaterialType.OUTLINE:
+            _filters.append(Section.material_type.in_([
+                MaterialType.OUTLINE.value, MaterialType.SECTION.value]))
+        else:
+            _filters.append(Section.material_type == material_type.value)
+    result = await db.execute(select(Section).where(*_filters).order_by(Section.order_index.asc()))
+    _sections = result.scalars().all()
+    return _sections

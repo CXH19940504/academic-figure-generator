@@ -36,11 +36,11 @@ class PaperType(IntEnum):
 
 class MaterialType(IntEnum):
     """材料类型"""
-    OUTLINE = 1  # 文章大纲（引言，主体，结论）
+    SECTION = 1  # 文章主体
     REFERENCES = 2  # 中英文参考文献
     ABSTRACT = 3  # 中英文摘要
     ACKNOWLEDGEMENT = 4  # 致谢模板
-    SECTION = 5  # 章节内容
+    OUTLINE = 5  # 大纲
     FIGURE = 6  # 图
     TABLE = 7  # 表格
     FORMULA = 8  # 公式

@@ -1,8 +1,9 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class PromptGenerateRequest(BaseModel):
-    section_indices: list[int] | None = None  # None means all sections
+    document_id: str | None = None  # explicit document selection
+    section_indices: list[int] = Field(default_factory=list, description="Section indices to generate prompts for")  # # None means all sections
     color_scheme: str = "okabe-ito"
     custom_colors: dict | None = None
     figure_types: list[str] | None = None
@@ -17,6 +18,7 @@ class PromptResponse(BaseModel):
     id: str
     project_id: str
     document_id: str | None
+    material_type: int | None
     figure_number: int
     title: str | None
     original_prompt: str | None

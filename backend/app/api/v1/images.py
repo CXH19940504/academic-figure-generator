@@ -17,6 +17,7 @@ from app.config import get_settings
 from app.core.exceptions import BadRequestException, ExternalAPIException, NotFoundException
 from app.dependencies import get_db
 from app.models.image import Image
+from app.models.project import Project
 from app.models.prompt import Prompt
 from app.schemas.image import (
     ImageDirectGenerateRequest,
