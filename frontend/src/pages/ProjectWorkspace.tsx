@@ -97,6 +97,8 @@ export function ProjectWorkspace() {
     const promptMode = 'sections';
     const [promptDetails, setPromptDetails] = useState<Record<string, {id: string; title: string; active_prompt: string}>>({});
     const [generatingPrompts, setGeneratingPrompts] = useState<Record<string, boolean>>({});
+    const [isGenerateSectionPrompts, setIsGenerateSectionPrompts] = useState(false);
+    const prevPromptCountRef = useRef(0);
 
     // Upload state
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -278,6 +280,11 @@ export function ProjectWorkspace() {
                 };
                 isGenerating[p.id] = (p.generation_status === 'pending');
             });
+            const newPromptCount = promptsData.length;
+            if (newPromptCount > prevPromptCountRef.current) {
+                setIsGenerateSectionPrompts(false);
+            }
+            prevPromptCountRef.current = newPromptCount;
             setPromptDetails(detailsObj);
             setGeneratingPrompts(isGenerating);
         } catch (err) {
@@ -585,6 +592,11 @@ export function ProjectWorkspace() {
     const handleGenerateContentWithPrompt = async () => {
         if (!id) return;
 
+        if (isGenerateSectionPrompts) {
+            alert('正在生成Prompt，请稍后。');
+            return;
+        }
+
         if (promptMode === 'sections' && selectedSectionIndices.length === 0) {
             alert('请至少选择一个章节。');
             return;
@@ -601,10 +613,13 @@ export function ProjectWorkspace() {
                 return;
             }
 
+            setIsGenerateSectionPrompts(true);
+
             // prompt_ids is a list of prompt ids
             const promptIds = promptResponse.data.prompt_ids;
             if (promptIds.length === 0) {
                 alert('未生成任何Prompt，请检查章节选择。');
+                setIsGenerateSectionPrompts(false);
                 return;
             }
             // 刷新sections以获取最新的prompt关联
@@ -622,7 +637,7 @@ export function ProjectWorkspace() {
                 return;
             } else {
                 alert(`成功生成 ${generateResponse.data.section_count || 0} 个段落`);
-                await fetchSections(); 
+                await fetchSections();
             }
         } catch (err: any) {
             console.error('Failed to generate content', err);
@@ -1125,8 +1140,12 @@ export function ProjectWorkspace() {
                         </div>
                     </CardContent>
                     <CardFooter className="p-4 border-t bg-muted/10 flex gap-2">
-                        <Button className="flex-1 font-semibold bg-white text-black hover:bg-gray-100 border border-gray-200" onClick={handleGenerateContentWithPrompt}>
-                            生成正文
+                        <Button className="flex-1 font-semibold bg-white text-black hover:bg-gray-100 border border-gray-200" onClick={handleGenerateContentWithPrompt} disabled={isGenerateSectionPrompts}>
+                            {isGenerateSectionPrompts ? (
+                                <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> 生成中...</>
+                            ) : (
+                                '生成正文'
+                            )}
                         </Button>
                         <Button className="flex-1 font-semibold" onClick={handleAutoGenerate} disabled={isAutoGenerating}>
                             {isAutoGenerating ? (
