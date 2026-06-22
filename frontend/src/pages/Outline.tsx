@@ -343,13 +343,12 @@ export function Outline() {
          // 将 system_prompt 渲染到 outlinePrompt
          setOutlinePrompt(system_prompt);
          setPromptId(prompt_id);
-         setDocumentId(document_id);
-         setIsGenerating(true);
-
-         // 第二步：使用 prompt_id 生成大纲（后端异步执行）
-         await api.post(`/outline/${prompt_id}/generate`);
          // Polling (useEffect on [promptId, isGenerating]) will monitor
          // generate_status and call fetchDocumentSections() when complete.
+         setDocumentId(document_id);
+
+         // 第二步：使用 prompt_id 生成大纲（后端异步执行）
+         // await api.post(`/outline/${prompt_id}/generate`);
 
       } catch (e: any) {
          console.error(e);
@@ -634,7 +633,7 @@ export function Outline() {
                         {isGenerating ? (
                            <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> 生成中...</>
                         ) : (
-                           <><Wand2 className="w-4 h-4 mr-1" /> 生成大纲</>
+                           <><Wand2 className="w-4 h-4 mr-1" /> 获取指令（Prompt）</>
                         )}
                      </Button>
                      <Button

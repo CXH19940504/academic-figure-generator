@@ -287,26 +287,10 @@ async def create_outline_prompt(
     }
     system_prompt = _build_system_prompt(MaterialType.OUTLINE.name, params)
 
-    # 5. 获取或创建 Prompt
-    if data.prompt_id:
-        prompt = await get_prompt_from_db(data.prompt_id, db)
-    else:
-        prompt = Prompt(
-            project_id=project_id,
-            document_id=document_id,
-            figure_number=0,
-        )
-        db.add(prompt)
-        await db.flush()
-    prompt.title = data.title
-    prompt.material_type = MaterialType.OUTLINE.value
-    prompt.original_prompt = system_prompt
-    await db.flush()
-
     return OutlinePromptResponse(
         success=True,
         message="Prompt创建成功",
-        prompt_id=prompt.id,
+        prompt_id=data.prompt_id,
         document_id=document_id,
         project_id=project_id,
         system_prompt=system_prompt,
