@@ -398,6 +398,7 @@ async def generate_outline_direct(
     prompt.material_type = MaterialType.OUTLINE.value
     prompt.edited_prompt = data.outline_prompt
     await db.flush()
+    await db.commit()  # 持久化 Prompt，避免后续生成失败导致 Prompt 丢失
 
     service = DeepseekService()
     
@@ -428,6 +429,7 @@ async def generate_outline_direct(
         prompt.generation_status = "failed"
         document.parse_status = "failed"
         await db.flush()
+        await db.commit()  # 持久化失败状态
         raise e
 
 

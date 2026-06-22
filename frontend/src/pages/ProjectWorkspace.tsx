@@ -113,6 +113,10 @@ export function ProjectWorkspace() {
     const [promptEditing, setPromptEditing] = useState(false);
     const [promptEditContent, setPromptEditContent] = useState('');
     const [copiedSectionFeedback, setCopiedSectionFeedback] = useState(0);
+    const [isEditingSection, setIsEditingSection] = useState(false);
+    const [editedSectionContent, setEditedSectionContent] = useState('');
+    const [isSavingSection, setIsSavingSection] = useState(false);
+    const [copiedPromptId, setCopiedPromptId] = useState<string | null>(null);
 
     type SectionNode = {
         idx: number;
@@ -873,52 +877,135 @@ export function ProjectWorkspace() {
                                             <span className="text-xs text-muted-foreground">第 {(activeSection as any).page_start + 1} 页</span>
                                         )}
                                     </div>
-                                    {copiedSectionFeedback > 0 ? (
-                                        <span className="ml-auto shrink-0 text-xs text-green-600 font-medium animate-in fade-in">
-                                            已复制 {copiedSectionFeedback} 字符
-                                        </span>
-                                    ) : (
-                                        <button
-                                            type="button"
-                                            className="ml-auto shrink-0 p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                                            title="复制章节内容"
-                                            disabled={!((activeSection as any).content || (activeSection as any).text)}
-                                            onClick={() => {
-                                                const content = ((activeSection as any).content || (activeSection as any).text || '').toString();
-                                                if (!content) return;
-                                                let ok = false;
-                                                const ta = document.createElement('textarea');
-                                                ta.value = content;
-                                                ta.style.position = 'fixed';
-                                                ta.style.left = '-9999px';
-                                                ta.style.top = '-9999px';
-                                                document.body.appendChild(ta);
-                                                ta.focus();
-                                                ta.select();
-                                                try { ok = document.execCommand('copy'); } catch { /* ignore */ }
-                                                document.body.removeChild(ta);
-                                                if (typeof navigator?.clipboard?.writeText === 'function') {
-                                                    navigator.clipboard.writeText(content).then(() => {
-                                                        setCopiedSectionFeedback(content.length);
-                                                        setTimeout(() => setCopiedSectionFeedback(0), 2000);
-                                                    }).catch((e) => console.error('复制失败:', e));
-                                                    return;
-                                                }
-                                                if (ok) {
-                                                    setCopiedSectionFeedback(content.length);
-                                                    setTimeout(() => setCopiedSectionFeedback(0), 2000);
-                                                } else {
-                                                    console.error('复制章节内容失败: 两种方式均不可用');
-                                                }
-                                            }}
-                                        >
-                                            <Copy className="w-4 h-4" />
-                                        </button>
-                                    )}
+                                    <div className="ml-auto flex items-center gap-1 shrink-0">
+                                        {copiedSectionFeedback > 0 ? (
+                                            <span className="text-xs text-green-600 font-medium animate-in fade-in">
+                                                已复制 {copiedSectionFeedback} 字符
+                                            </span>
+                                        ) : isEditingSection ? null : (
+                                            <>
+                                                <button
+                                                    type="button"
+                                                    className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                                                    title="编辑章节内容"
+                                                    onClick={() => {
+                                                        const content = ((activeSection as any).content || (activeSection as any).text || '').toString();
+                                                        setEditedSectionContent(content);
+                                                        setIsEditingSection(true);
+                                                    }}
+                                                >
+                                                    <Wand2 className="w-4 h-4" />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                                                    title="复制章节内容"
+                                                    disabled={!((activeSection as any).content || (activeSection as any).text)}
+                                                    onClick={() => {
+                                                        const content = ((activeSection as any).content || (activeSection as any).text || '').toString();
+                                                        if (!content) return;
+                                                        let ok = false;
+                                                        const ta = document.createElement('textarea');
+                                                        ta.value = content;
+                                                        ta.style.position = 'fixed';
+                                                        ta.style.left = '-9999px';
+                                                        ta.style.top = '-9999px';
+                                                        document.body.appendChild(ta);
+                                                        ta.focus();
+                                                        ta.select();
+                                                        try { ok = document.execCommand('copy'); } catch { /* ignore */ }
+                                                        document.body.removeChild(ta);
+                                                        if (typeof navigator?.clipboard?.writeText === 'function') {
+                                                            navigator.clipboard.writeText(content).then(() => {
+                                                                setCopiedSectionFeedback(content.length);
+                                                                setTimeout(() => setCopiedSectionFeedback(0), 2000);
+                                                            }).catch((e) => console.error('复制失败:', e));
+                                                            return;
+                                                        }
+                                                        if (ok) {
+                                                            setCopiedSectionFeedback(content.length);
+                                                            setTimeout(() => setCopiedSectionFeedback(0), 2000);
+                                                        } else {
+                                                            console.error('复制章节内容失败: 两种方式均不可用');
+                                                        }
+                                                    }}
+                                                >
+                                                    <Copy className="w-4 h-4" />
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
                                 </div>
-                                <div className="text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap break-words">
-                                    {(activeSection as any).content || (activeSection as any).text || '（无内容预览）'}
-                                </div>
+                                {isEditingSection ? (
+                                    <div className="space-y-2">
+                                        <Textarea
+                                            value={editedSectionContent}
+                                            onChange={(e) => setEditedSectionContent(e.target.value)}
+                                            className="min-h-[200px] max-h-[50vh] text-xs font-mono"
+                                            placeholder="编辑章节内容..."
+                                        />
+                                        <div className="flex gap-2 justify-end">
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                disabled={isSavingSection}
+                                                onClick={() => {
+                                                    setIsEditingSection(false);
+                                                    setEditedSectionContent('');
+                                                }}
+                                            >
+                                                取消
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                disabled={isSavingSection}
+                                                onClick={async () => {
+                                                    if (!activeSection) return;
+                                                    const sectionId = parseInt((activeSection as any).id, 10);
+                                                    if (isNaN(sectionId)) {
+                                                        console.error('无效的章节ID');
+                                                        return;
+                                                    }
+                                                    setIsSavingSection(true);
+                                                    try {
+                                                        const response = await api.put(`/sections/${sectionId}`, {
+                                                            content: editedSectionContent,
+                                                        });
+                                                        if (response.data?.success) {
+                                                            // 更新本地 sections 状态
+                                                            setSections(prev =>
+                                                                prev.map(sec => {
+                                                                    if (parseInt(sec.id, 10) === sectionId) {
+                                                                        return { ...sec, content: editedSectionContent };
+                                                                    }
+                                                                    return sec;
+                                                                })
+                                                            );
+                                                            setIsEditingSection(false);
+                                                            setEditedSectionContent('');
+                                                        } else {
+                                                            alert('保存失败，请稍后重试');
+                                                        }
+                                                    } catch (err: any) {
+                                                        console.error('保存章节内容失败:', err);
+                                                        const detail = err?.response?.data?.detail;
+                                                        alert(detail ? `保存失败：${detail}` : '保存失败，请稍后重试');
+                                                    } finally {
+                                                        setIsSavingSection(false);
+                                                    }
+                                                }}
+                                            >
+                                                {isSavingSection ? (
+                                                    <><RefreshCw className="w-3 h-3 mr-1 animate-spin" /> 保存中</>
+                                                ) : '保存'}
+                                            </Button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap break-words">
+                                        {(activeSection as any).content || (activeSection as any).text || '（无内容预览）'}
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground gap-2 py-8">
@@ -1038,15 +1125,15 @@ export function ProjectWorkspace() {
                         </div>
                     </CardContent>
                     <CardFooter className="p-4 border-t bg-muted/10 flex gap-2">
+                        <Button className="flex-1 font-semibold bg-white text-black hover:bg-gray-100 border border-gray-200" onClick={handleGenerateContentWithPrompt}>
+                            生成正文
+                        </Button>
                         <Button className="flex-1 font-semibold" onClick={handleAutoGenerate} disabled={isAutoGenerating}>
                             {isAutoGenerating ? (
                                 <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> 生成配图中...</>
                             ) : (
                                 <><Send className="w-4 h-4 mr-2" /> 生成配图</>
                             )}
-                        </Button>
-                        <Button className="flex-1 font-semibold bg-white text-black hover:bg-gray-100 border border-gray-200" onClick={handleGenerateContentWithPrompt}>
-                            生成正文
                         </Button>
                     </CardFooter>
                 </Card>
@@ -1106,6 +1193,52 @@ export function ProjectWorkspace() {
                                                             {title}
                                                         </div>
                                                         <div className="flex gap-1">
+                                                            {copiedPromptId === prompt_id ? (
+                                                                <span className="text-xs text-green-600 font-medium px-1 self-center">已复制</span>
+                                                            ) : (
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="sm"
+                                                                    className="h-6 px-2 text-xs"
+                                                                    title="复制指令"
+                                                                    disabled={!detail?.active_prompt}
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        const text = String(detail?.active_prompt || '');
+                                                                        if (!text) return;
+                                                                        // Fallback: use textarea+execCommand for broader browser support
+                                                                        let ok = false;
+                                                                        const ta = document.createElement('textarea');
+                                                                        ta.value = text;
+                                                                        ta.style.position = 'fixed';
+                                                                        ta.style.left = '-9999px';
+                                                                        ta.style.top = '-9999px';
+                                                                        document.body.appendChild(ta);
+                                                                        ta.focus();
+                                                                        ta.select();
+                                                                        try { ok = document.execCommand('copy'); } catch { /* ignore */ }
+                                                                        document.body.removeChild(ta);
+                                                                        if (typeof navigator?.clipboard?.writeText === 'function') {
+                                                                            navigator.clipboard.writeText(text).then(() => {
+                                                                                setCopiedPromptId(prompt_id);
+                                                                                setTimeout(() => setCopiedPromptId(null), 2000);
+                                                                            }).catch(() => {
+                                                                                if (ok) {
+                                                                                    setCopiedPromptId(prompt_id);
+                                                                                    setTimeout(() => setCopiedPromptId(null), 2000);
+                                                                                }
+                                                                            });
+                                                                            return;
+                                                                        }
+                                                                        if (ok) {
+                                                                            setCopiedPromptId(prompt_id);
+                                                                            setTimeout(() => setCopiedPromptId(null), 2000);
+                                                                        }
+                                                                    }}
+                                                                >
+                                                                    <Copy className="h-3 w-3" />
+                                                                </Button>
+                                                            )}
                                                             <Button
                                                                 variant="ghost"
                                                                 size="sm"
@@ -1496,22 +1629,9 @@ export function ProjectWorkspace() {
                             className="min-h-[300px] max-h-[55vh]"
                         />
                     ) : (
-                        <div className="relative">
-                            <pre className="whitespace-pre-wrap text-sm bg-muted p-4 rounded-md max-h-[55vh] overflow-y-auto text-foreground/85 leading-relaxed">
-                                {promptViewer.content || '暂无 Prompt 内容'}
-                            </pre>
-                            <Button
-                                size="sm"
-                                variant="outline"
-                                className="absolute top-2 right-2"
-                                onClick={() => {
-                                    navigator.clipboard.writeText(promptViewer.content);
-                                }}
-                            >
-                                <Copy className="mr-1 h-3 w-3" />
-                                复制
-                            </Button>
-                        </div>
+                        <pre className="whitespace-pre-wrap text-sm bg-muted p-4 rounded-md max-h-[55vh] overflow-y-auto text-foreground/85 leading-relaxed">
+                            {promptViewer.content || '暂无 Prompt 内容'}
+                        </pre>
                     )}
                     <div className="flex gap-2 justify-end">
                         {promptEditing ? (

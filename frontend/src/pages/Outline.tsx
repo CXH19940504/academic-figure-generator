@@ -196,7 +196,7 @@ export function Outline() {
             setPromptId(latestPrompt.id || null);
             setIsGenerating(latestPrompt.generate_status === 'generating');
          } else {
-            setOutlinePrompt('');
+            // 不修改 outlinePrompt，避免覆盖用户正在编辑的内容
             setPromptId(null);
             setIsGenerating(false);
          }

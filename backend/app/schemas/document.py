@@ -110,7 +110,7 @@ class OutlinePromptResponse(BaseModel):
     """大纲Prompt创建的响应"""
     success: bool = True
     message: str = "Prompt创建成功"
-    prompt_id: str
+    prompt_id: str | None = None
     document_id: str
     project_id: str
     system_prompt: str
