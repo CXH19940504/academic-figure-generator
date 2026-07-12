@@ -127,6 +127,18 @@ class DeepseekService:
                 "data": result_text,
                 "duration_ms": duration_ms,
             }
+        elif material_type == MaterialType.OUTLINE:
+            outline = self._parse_outline_response(result_text)
+            logger.info(
+                "Deepseek API call completed in %d ms: %d outline items (stream=%s)",
+                duration_ms,
+                len(outline),
+                stream,
+            )
+            return {
+                "data": outline,
+                "duration_ms": duration_ms,
+            }
         elif material_type not in (MaterialType.FIGURE, MaterialType.TABLE, MaterialType.FORMULA, MaterialType.CODE):
             sections = self._parse_sections_response(result_text)
             logger.info(
@@ -364,6 +376,138 @@ class DeepseekService:
             valid.append(validated)
 
         return valid
+
+    def _parse_outline_response(self, text: str) -> list[dict]:
+        """
+        解析 markdown 格式的论文大纲返回结果。
+
+        支持的格式（定义于 system_prompt.py OUTLINE_SYSTEM_PROMPT）::
+
+            ## 论文标题建议
+            - [提供论文标题，一般不超过20字...]
+
+            ## 详细大纲
+
+            ### Abstract
+            - [ ] 研究背景和动机
+            - [ ] 核心方法/贡献
+
+            ### Introduction
+            - [ ] 研究背景
+              - [ ] 研究重要性
+              - [ ] 现有工作的局限性
+            - [ ] 本文的核心贡献
+                - [ ] [贡献 1]
+                - [ ] [贡献 2]
+
+        解析规则：
+        - ``### 标题`` 作为 level 1
+        - ``- [ ] item`` 或 ``- item``（无缩进）作为 level 2
+        - 每增加 2 个空格的缩进，level +1（level 3、4...）
+
+        容忍实际返回中的差异：emoji 前缀（``## 📋 详细大纲``）、
+        子项省略 ``[ ]``、缩进为 3 空格等。
+
+        Returns:
+            list[dict]: 大纲条目列表，每项含 level、title、order；
+            level==1 的条目额外带 material_type。
+        """
+        logger.info("_parse_outline_response input (len=%d):\n%s", len(text), text)
+        cleaned = self._clean_response(text)
+
+        outline: list[dict] = []
+        order = 0
+
+        # 一次性遍历所有 "## " 二级标题，按标题名分流
+        # group(1)=标题名，group(2)=该区段内容（截至下一个 ## 或文末）
+        h2_pattern = re.compile(
+            r"^#{2}\s+(.+?)\s*$\n(.*?)(?=^#{2}\s+|\Z)",
+            re.MULTILINE | re.DOTALL,
+        )
+        body: str = ""
+
+        for h2_match in h2_pattern.finditer(cleaned):
+            heading_name = h2_match.group(1)
+            heading_body = h2_match.group(2)
+
+            if "论文标题建议" in heading_name:
+                # 提取标题建议，level=0、order=-1
+                outline.append({
+                    "level": 0,
+                    "title": heading_body.strip(),
+                    "order": -1,
+                })
+            elif "详细大纲" in heading_name:
+                body = heading_body
+
+        if not body:
+            logger.warning("Could not locate '## 详细大纲' section; parsing entire response")
+            body = cleaned
+
+        # 行级解析
+        heading_pattern = re.compile(r"^#{3}\s+(.+?)\s*$")
+        # 支持 "- [ ] item"、"-[ ] item" 等写法
+        item_pattern = re.compile(r"^( *)[-*]\s*(?:\[[ xX]*\]\s*)(.+?)\s*$")
+
+        for raw_line in body.splitlines():
+            line = raw_line.rstrip()
+            if not line.strip():
+                continue
+
+            # level 1：### 标题
+            heading_match = heading_pattern.match(line)
+            if heading_match:
+                title = heading_match.group(1).strip()
+                if not title:
+                    continue
+                order += 1
+                entry: dict[str, Any] = {
+                    "level": 1,
+                    "title": title,
+                    "order": order,
+                }
+                entry["material_type"] = MaterialType.get_value_by_name(title)
+                outline.append(entry)
+                continue
+
+            # level 2+：- [ ] item / - item，按缩进计算层级
+            item_match = item_pattern.match(line)
+            if item_match:
+                indent = len(item_match.group(1))
+                title = item_match.group(2).strip()
+                if not title:
+                    continue
+                # 每 2 个空格缩进增加一级，level 起始为 2
+                level = min(2 + indent // 2, 6)
+                order += 1
+                outline.append({
+                    "level": level,
+                    "title": title,
+                    "order": order,
+                    "content": "",
+                })
+                continue
+            else:
+                content = raw_line.strip()
+                if not content:
+                    continue
+                if outline[-1]["content"]:
+                    outline[-1]["content"] += "\n"
+                outline[-1]["content"] += content
+
+            # 跳过非大纲行（如 "## 论文标题建议"、纯文本说明等）
+            logger.debug("Skipping non-outline line: %s", line)
+
+        if not outline:
+            logger.warning("Could not parse outline from Deepseek response: no headings or items found")
+            outline.append({
+                "level": 1,
+                "title": cleaned,
+                "order": 0,
+            })
+
+        logger.info("Parsed %d outline items from Deepseek response", len(outline))
+        return outline
 
     async def generate_figure_prompts(
         self,

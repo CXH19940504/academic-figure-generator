@@ -550,24 +550,62 @@ Ignore any paper content provided. Generate purely structural template diagrams 
 LANGUAGES = ["中文", "English"]
 
 OUTLINE_SYSTEM_PROMPT = ["""
-# 角色
-你是一名精通 **{% major_name %}** 领域的资深论文导师，以 **{% paper_title %}** 为选题规划一份可撰写 **{% word_count %}** 字的 **{% paper_type %}** 详细大纲。
-仅使用 <heading1>、<heading2> 和 <heading3> 标签构建三级标题体系，格式如下所示：
-```
-<heading1>摘要</heading1>
-<heading1>一级标题</heading1>
-<heading2>二级标题</heading2>
-<heading3>三级标题</heading3>
-<heading1>结论</heading1>
-<heading1>参考文献</heading1>
-```
-# 论文撰写规范（严格遵循）
-{% template_content %}
-# 注意事项
-1. **标题层级**：必须包含三级标题，标题内容必须符合研究主题和论文类型。
-2. **字数与结构控制**：遵守每个三级标题对应约200~500字，每个二级标题对应约800~1200字。请据此推算出所需的二级和一级标题数量，确保总字数与 {% word_count %} 字 的目标相匹配，整体结构疏密得当。
-3. **章内相关性**：严格保证父标题与子标题之间的逻辑继承与支撑关系（如研究方法下可自然展开为实验设计、数据采集与分析等）。
-4. **内容一致性**：除摘要、参考文献等固定章节外，各章节标题必须高度概括其正文内容，确保题文严格相符。
+# Role
+你是一位经验丰富的论文作者和审稿人，擅长设计清晰的论文结构。
+
+# Task
+请根据用户提供的【研究内容/想法】，生成一份 **{% major_name %}** 专业 **{% word_count %}字** 的 {% paper_type %}详细的论文大纲，章节标题不超过10个字。
+
+# Output Format
+## 论文标题建议
+- [提供论文标题，一般不超过20字，如果有些细节必须放进标题，可以使用：主标题——副标题 结构]
+
+## 详细大纲
+
+### Abstract
+- [ ] 研究背景和动机
+- [ ] 核心方法/贡献
+- [ ] 主要实验结果
+- [ ] 结论和意义
+
+### Introduction
+- [ ] 研究背景
+  - [ ] 研究重要性
+  - [ ] 现有工作的局限性
+- [ ] 本文的核心贡献 [3-4 点]
+  - [ ] [贡献 1]
+  - [ ] [贡献 2]
+  - [ ] [贡献 3]
+- [ ] 论文结构概述
+
+### Related Work
+- [ ] [主题 1]
+- [ ] [主题 2]
+
+### Method
+- [ ] 问题定义/形式化
+- [ ] 方法概述/整体框架
+- [ ] 核心模块/技术细节
+    - [ ] [模块 1]
+    - [ ] [模块 2]
+    - [ ] [模块 3]
+
+### Experiments
+- [ ] 实验设置
+- [ ] 主实验结果
+- [ ] 实验分析
+- [ ] 案例分析/可视化
+    - [ ] [分析结果 1]
+    - [ ] [分析结果 2]
+    - [ ] [分析结果 3]
+
+### Conclusion
+- [ ] 工作总结
+- [ ] 局限性
+- [ ] 未来方向
+
+# Input
+[在此处描述你的研究内容、核心想法、实验结果等]
 """, """
 # Role
 You are a senior thesis supervisor proficient in the field of {% major_name %}. Design a detailed outline for a {% paper_type %} with the topic {% paper_title %}, which needs to reach {% word_count %} words in total.

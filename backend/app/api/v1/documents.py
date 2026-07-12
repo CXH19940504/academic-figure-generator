@@ -313,10 +313,17 @@ async def generate_outline_by_prompt(
     """
     # 获取 Prompt
     prompt = await get_prompt_from_db(prompt_id, db)
-    system_prompt = prompt.edited_prompt or prompt.original_prompt
-    if not system_prompt:
-        raise BadRequestException("Prompt edited_prompt and original_prompt are both empty")   
-    
+    if not prompt.active_prompt:
+        raise BadRequestException("Prompt edited_prompt and original_prompt are both empty")
+
+    # 提取 system prompt 和 user prompt
+    prompts = prompt.active_prompt.split("\nUser Input:\n")
+    system_prompt = prompts[0]
+    if len(prompts) != 2:
+        user_prompt = "按要求生成大纲"
+    else:
+        user_prompt = prompts[1]
+
     project_id = prompt.project_id
     document_id = prompt.document_id
 
@@ -327,7 +334,6 @@ async def generate_outline_by_prompt(
     await db.flush()
 
     service = DeepseekService()
-    user_prompt = "按要求生成大纲"
 
     try:
         result = await service.generate_txt_from_prompt(
