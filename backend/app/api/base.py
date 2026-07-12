@@ -77,14 +77,15 @@ async def get_document_without_outline(document_id: str, db: AsyncSession) -> Do
         except NotFoundException:
             # 文档不存在，转到创建新文档
             document = None
-        else:
-            section_count = (await db.execute(select(func.count()).select_from(Section).where(
-                Section.document_id == document_id))).scalar_one()
-            if section_count and section_count > 0:
-                # 文档存在且有 section 数据，直接返回
-                return document
+    else:
+        section_count = (await db.execute(
+            select(func.count()).select_from(Section).where(
+            Section.document_id == document_id)
+        )).scalar_one()
+        if not section_count and section_count == 0:
             # 文档存在但无 section，需要重新生成
             document.parse_status = "pending"
+            await db.flush()
             return document
 
     # 无 document_id 或文档不存在，创建一个新的空文档
@@ -97,8 +98,7 @@ async def get_document_without_outline(document_id: str, db: AsyncSession) -> Do
         storage_path=""
     )
     db.add(document)
-    await db.flush()
-    await db.refresh(document)
+    await db.commit()
     return document
 
 

@@ -409,7 +409,6 @@ async def generate_outline_direct(
     service = DeepseekService()
     
     try:
-
         # 提取 system prompt 和 user prompt
         prompts = prompt.active_prompt.split("\nUser Input:\n")
         system_prompt = prompts[0]
