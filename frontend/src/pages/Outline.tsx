@@ -62,6 +62,7 @@ export function Outline() {
    const [loadingProject, setLoadingProject] = useState(false);
    const [projectExists, setProjectExists] = useState(true);
    const projectFetchedRef = useRef(false);
+   const templatesFetchedRef = useRef(false);
 
    // 校验项目是否存在
    const validateProject = async (id: string) => {
@@ -234,10 +235,10 @@ export function Outline() {
       fetchProject();
    }, []);
 
-   // 项目ID就绪后加载文档列表和模板
+   // 挂载时加载模板列表
    useEffect(() => {
-      if (!projectId) return;
-      fetchDocumentId();
+      if (templatesFetchedRef.current) return;
+      templatesFetchedRef.current = true;
 
       const loadTemplates = async () => {
          setLoadingTemplates(true);
@@ -255,6 +256,12 @@ export function Outline() {
          }
       };
       loadTemplates();
+   }, []);
+
+   // 项目ID就绪后加载文档列表
+   useEffect(() => {
+      if (!projectId) return;
+      fetchDocumentId();
    }, [projectId]);
 
    // 文档ID就绪后加载 prompts 和 sections

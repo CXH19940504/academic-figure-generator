@@ -409,10 +409,18 @@ async def generate_outline_direct(
     service = DeepseekService()
     
     try:
+
+        # 提取 system prompt 和 user prompt
+        prompts = prompt.active_prompt.split("\nUser Input:\n")
+        system_prompt = prompts[0]
+        if len(prompts) != 2:
+            user_prompt = "按要求生成大纲"
+        else:
+            user_prompt = prompts[1]
         # 使用自定义prompt作为system_prompt
         result = await service.generate_txt_from_prompt(
-            user_prompt="按要求生成大纲",
-            system_prompt=data.outline_prompt,
+            user_prompt=user_prompt,
+            system_prompt=system_prompt,
             material_type=MaterialType.OUTLINE,
         )
         document = await get_document_without_outline(document_id, db)
