@@ -64,7 +64,9 @@ async def get_document_from_db(document_id: str, db: AsyncSession) -> Document:
         raise NotFoundException("Document not found")
     return document
 
-async def get_document_without_outline(document_id: str, db: AsyncSession) -> Document:
+async def get_document_without_outline(
+    document_id: str, db: AsyncSession, project_id: str | None = None
+) -> Document:
     """Get document by ID, or create a new one if not found or has no outline.
 
     - Document exists with sections → return as-is.
@@ -74,23 +76,22 @@ async def get_document_without_outline(document_id: str, db: AsyncSession) -> Do
     if document_id:
         try:
             document = await get_document_from_db(document_id, db)
+            section_count = (await db.execute(
+                select(func.count()).select_from(Section).where(
+                Section.document_id == document_id)
+            )).scalar_one()
+            if not section_count:
+                # 文档存在但无 section，需要重新生成
+                document.parse_status = "pending"
+                await db.flush()
+                return document
         except NotFoundException:
             # 文档不存在，转到创建新文档
-            document = None
-    else:
-        section_count = (await db.execute(
-            select(func.count()).select_from(Section).where(
-            Section.document_id == document_id)
-        )).scalar_one()
-        if not section_count and section_count == 0:
-            # 文档存在但无 section，需要重新生成
-            document.parse_status = "pending"
-            await db.flush()
-            return document
+            pass
 
     # 无 document_id 或文档不存在，创建一个新的空文档
     document = Document(
-        project_id="",
+        project_id=project_id or "",
         uuid="",
         original_filename="",
         file_type="",
@@ -98,7 +99,7 @@ async def get_document_without_outline(document_id: str, db: AsyncSession) -> Do
         storage_path=""
     )
     db.add(document)
-    await db.commit()
+    await db.flush()
     return document
 
 

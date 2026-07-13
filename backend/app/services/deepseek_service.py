@@ -447,7 +447,13 @@ class DeepseekService:
         # 行级解析
         heading_pattern = re.compile(r"^#{3}\s+(.+?)\s*$")
         # 支持 "- [ ] item"、"-[ ] item" 等写法
-        item_pattern = re.compile(r"^( *)[-*]\s*(?:\[[ xX]*\]\s*)(.+?)\s*$")
+        item_pattern = re.compile(
+            r"^( \*)"                  # 1. 缩进空格
+            r"\[-\*\]\\s\*(?:\\\[\[ xX\]\*\\\]\\s\*)" # 列表标记 + 勾选框
+            r"(.+?)"                  # 2. title（非贪婪）
+            r"(?:\[:：\]\\s\*(.+?))?"     # 3. 可选：冒号 + content
+            r"\\s\*$"                   # 行尾空白
+        )
 
         for raw_line in body.splitlines():
             line = raw_line.rstrip()
@@ -477,6 +483,8 @@ class DeepseekService:
                 title = item_match.group(2).strip()
                 if not title:
                     continue
+                # 无内容时置空字符串
+                content = item_match.group(3).strip() if item_match.group(3) else ""
                 # 每 2 个空格缩进增加一级，level 起始为 2
                 level = min(2 + indent // 2, 6)
                 order += 1
@@ -484,19 +492,20 @@ class DeepseekService:
                     "level": level,
                     "title": title,
                     "order": order,
-                    "content": "",
+                    "content": content,
                 })
                 continue
             else:
+                # 非标题、非列表项的行，作为上一个条目正文内容
                 content = raw_line.strip()
                 if not content:
                     continue
-                if outline[-1]["content"]:
-                    outline[-1]["content"] += "\n"
-                outline[-1]["content"] += content
-
-            # 跳过非大纲行（如 "## 论文标题建议"、纯文本说明等）
-            logger.debug("Skipping non-outline line: %s", line)
+                if outline:
+                    if outline[-1]["content"]:
+                        outline[-1]["content"] += "\n"
+                    outline[-1]["content"] += content
+                else:
+                    logger.debug("Skipping content line before first outline item: %s", line)
 
         if not outline:
             logger.warning("Could not parse outline from Deepseek response: no headings or items found")

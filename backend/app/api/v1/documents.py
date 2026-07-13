@@ -341,7 +341,7 @@ async def generate_outline_by_prompt(
             system_prompt=system_prompt,
             material_type=MaterialType.OUTLINE,
         )
-        document = await get_document_without_outline(document_id, db)
+        document = await get_document_without_outline(document_id, db, project_id)
         document_id = document.id
         section_count = await _save_sections_to_db(result.get("data", []), document_id, db)
         # 更新 Document 状态
@@ -378,7 +378,7 @@ async def generate_outline_direct(
     project_id = project.id
 
     # 2.获取或创建文档
-    document = await get_document_without_outline(data.document_id, db)
+    document = await get_document_without_outline(data.document_id, db, project_id)
     document.project_id = project_id
     document.title = data.title
     document.parse_status = "generating"
@@ -407,7 +407,7 @@ async def generate_outline_direct(
     await db.commit()  # 持久化 Prompt，避免后续生成失败导致 Prompt 丢失
 
     service = DeepseekService()
-    
+
     try:
         # 提取 system prompt 和 user prompt
         prompts = prompt.active_prompt.split("\nUser Input:\n")
@@ -422,8 +422,11 @@ async def generate_outline_direct(
             system_prompt=system_prompt,
             material_type=MaterialType.OUTLINE,
         )
-        document = await get_document_without_outline(document_id, db)
+        document = await get_document_without_outline(document_id, db, project_id)
         document_id = document.id
+        if result.get("data", []) and result["data"][0]["level"] == 0:
+            document.title = result["data"][0]["title"]
+            result["data"].pop(0)
         section_count = await _save_sections_to_db(result.get("data", []), document_id, db)
         prompt.generation_status = "completed"
         document.parse_status = "completed"
